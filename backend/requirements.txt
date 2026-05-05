@@ -8,4 +8,4 @@ httpx==0.28.1
 h11>=0.16.0
 huggingface_hub==0.26.2
 hf_transfer==0.1.8
-python-multipart==0.0.20
+python-multipart==0.0.27
