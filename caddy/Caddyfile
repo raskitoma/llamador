@@ -16,7 +16,9 @@
     # WebSocket upgrade pass-through is automatic in Caddy v2.
 
     # /api/* → backend (FastAPI). WebSockets included.
-    handle_path /api/* {
+    # `handle` (not `handle_path`) so the /api prefix reaches the backend —
+    # FastAPI registers its routes with the full /api/... path.
+    handle /api/* {
         reverse_proxy backend:8000 {
             transport http {
                 read_timeout 0
