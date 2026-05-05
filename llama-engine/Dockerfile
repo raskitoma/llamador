@@ -25,6 +25,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcurl4-openssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
+# CUDA driver stub for build-time linking. libcuda.so.1 is provided by the host
+# NVIDIA driver at runtime (via the NVIDIA Container Toolkit), but the linker
+# still needs to resolve it during the final link of test binaries. Expose the
+# stub on LIBRARY_PATH and create the .so.1 SONAME symlink ld looks for.
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
+RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+
 WORKDIR /src
 RUN git clone --depth 1 -b "${TURBOQUANT_BRANCH}" "${TURBOQUANT_REPO}" turboquant \
  && cd turboquant && git rev-parse HEAD > /src/turboquant.sha
