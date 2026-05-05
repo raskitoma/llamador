@@ -27,10 +27,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # CUDA driver stub for build-time linking. libcuda.so.1 is provided by the host
 # NVIDIA driver at runtime (via the NVIDIA Container Toolkit), but the linker
-# still needs to resolve it during the final link of test binaries. Expose the
-# stub on LIBRARY_PATH and create the .so.1 SONAME symlink ld looks for.
-ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
-RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+# still needs to resolve it during the final link of test executables that
+# transitively pull in libggml-cuda.so. Expose the stub three ways:
+#   - LIBRARY_PATH   so the compiler driver finds it for direct -l usage
+#   - LD_LIBRARY_PATH so ld uses it for -rpath-link / NEEDED resolution
+#   - ld.so.conf.d   so ldconfig adds it to the runtime cache too
+# And create the libcuda.so.1 SONAME symlink ld actually looks for.
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
+RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 \
+ && echo "/usr/local/cuda/lib64/stubs" > /etc/ld.so.conf.d/cuda-stubs.conf \
+ && ldconfig
 
 WORKDIR /src
 RUN git clone --depth 1 -b "${TURBOQUANT_BRANCH}" "${TURBOQUANT_REPO}" turboquant \
