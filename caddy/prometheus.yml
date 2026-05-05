@@ -1,0 +1,17 @@
+# Prometheus config consumed by the optional `metrics` profile.
+# Scrapes the engine's /metrics endpoint (a Prometheus exposition format).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: llama-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['llama-engine:8080']
+
+  - job_name: llamador-backend
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ['backend:8000']

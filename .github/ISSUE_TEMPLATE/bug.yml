@@ -1,0 +1,33 @@
+name: Bug report
+description: Something is broken
+labels: [bug]
+body:
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU model
+      placeholder: e.g. NVIDIA GeForce GTX 1080 8GB
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: NVIDIA driver / CUDA
+      placeholder: nvidia-smi top line
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Engine logs
+      description: docker compose logs --tail=200 llama-engine
+      render: shell
+  - type: textarea
+    id: config
+    attributes:
+      label: data/config/engine.json
+      render: json

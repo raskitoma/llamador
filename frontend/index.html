@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en" class="bg-zinc-950">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>llamador — control panel</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='28'%3E%F0%9F%A6%99%3C/text%3E%3C/svg%3E" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="text-zinc-100 antialiased font-sans">
+<div x-data="llamador()" x-init="boot()" class="max-w-7xl mx-auto p-6 space-y-6">
+
+  <!-- header -->
+  <header class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="text-3xl">🦙</span>
+      <div>
+        <h1 class="text-xl font-semibold tracking-tight">llamador</h1>
+        <p class="text-xs text-zinc-400">TurboQuant llama.cpp + Qwen3.6 — Pascal-tuned control plane</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3 text-xs">
+      <span class="px-2 py-1 rounded-full"
+            :class="status.engine?.running ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'">
+        engine: <span x-text="status.engine?.status || '—'"></span>
+      </span>
+      <span class="px-2 py-1 rounded-full bg-zinc-800 text-zinc-300"
+            x-text="`health: ${status.engine?.health || '—'}`"></span>
+      <span class="px-2 py-1 rounded-full"
+            :class="status.auth?.inference_locked ? 'bg-amber-500/20 text-amber-300' : 'bg-zinc-800 text-zinc-400'"
+            x-text="status.auth?.inference_locked ? '🔒 /v1 keyed' : '/v1 open'"></span>
+      <button @click="refresh()" class="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700">↻ refresh</button>
+    </div>
+  </header>
+
+  <!-- tabs -->
+  <nav class="flex gap-1 border-b border-zinc-800 overflow-x-auto">
+    <template x-for="t in tabs" :key="t">
+      <button @click="tab = t"
+              :class="tab === t ? 'border-emerald-400 text-emerald-300' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+              class="px-4 py-2 border-b-2 text-sm capitalize transition whitespace-nowrap" x-text="t"></button>
+    </template>
+  </nav>
+
+  <!-- ============================== STATUS ================================== -->
+  <section x-show="tab === 'status'" class="space-y-6">
+    <div class="grid md:grid-cols-2 gap-6">
+
+      <!-- knobs -->
+      <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
+        <h2 class="font-medium mb-4">Engine knobs</h2>
+        <div class="grid grid-cols-2 gap-4 text-sm">
+          <label class="space-y-1">
+            <span class="text-zinc-400">Model file</span>
+            <select x-model="cfg.model_file" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5">
+              <template x-for="m in models" :key="m.name">
+                <option :value="m.name" x-text="m.name"></option>
+              </template>
+            </select>
+          </label>
+          <label class="space-y-1">
+            <span class="text-zinc-400">Alias</span>
+            <input x-model="cfg.alias" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
+          </label>
+          <label class="space-y-1">
+            <span class="text-zinc-400">--n-cpu-moe (0–48)</span>
+            <input type="number" x-model.number="cfg.n_cpu_moe" min="0" max="64"
+                   class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
+          </label>
+          <label class="space-y-1">
+            <span class="text-zinc-400">Context</span>
+            <input type="number" x-model.number="cfg.ctx" min="512" max="262144" step="512"
+                   class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
+          </label>
+          <label class="space-y-1">
+            <span class="text-zinc-400">KV cache type</span>
+            <select x-model="cfg.kv_type" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5">
+              <template x-for="t in kvTypes" :key="t"><option :value="t" x-text="t"></option></template>
+            </select>
+          </label>
+          <label class="space-y-1">
+            <span class="text-zinc-400">FlashAttention</span>
+            <select x-model="cfg.flash_attn" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5">
+              <option value="on">on</option><option value="off">off</option>
+            </select>
+          </label>
+          <label class="space-y-1">
+            <span class="text-zinc-400">Threads (0=auto)</span>
+            <input type="number" x-model.number="cfg.threads" min="0" max="256"
+                   class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
+          </label>
+          <label class="space-y-1">
+            <span class="text-zinc-400">Batch / micro</span>
+            <div class="flex gap-1">
+              <input type="number" x-model.number="cfg.batch" class="w-1/2 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
+              <input type="number" x-model.number="cfg.ubatch" class="w-1/2 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
+            </div>
+          </label>
+          <label class="space-y-1 col-span-2">
+            <span class="text-zinc-400">Extra args (raw)</span>
+            <input x-model="cfg.extra_args" placeholder="--top-p 0.9 --temp 0.7"
+                   class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 font-mono text-xs" />
+          </label>
+        </div>
+        <div class="flex items-center gap-3 mt-5">
+          <button @click="saveConfig(false)" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">Save</button>
+          <button @click="saveConfig(true)"  class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm">Save &amp; restart engine</button>
+          <span class="text-xs text-zinc-500" x-text="saveMsg"></span>
+        </div>
+      </div>
+
+      <div class="space-y-6">
+
+        <!-- GPU tile -->
+        <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-medium">GPU</h2>
+            <span class="text-xs text-zinc-500" x-text="gpu.available ? gpu.source : (gpu.error || 'unknown')"></span>
+          </div>
+          <template x-if="!gpu.available"><p class="text-xs text-zinc-500">No GPU stats yet.</p></template>
+          <template x-for="g in gpu.gpus || []" :key="g.index">
+            <div class="space-y-2 mb-3">
+              <div class="flex justify-between text-sm">
+                <span class="text-zinc-300" x-text="`#${g.index} ${g.name}`"></span>
+                <span class="text-zinc-400 text-xs" x-text="`${g['temperature.gpu']??'—'}°C · ${g['power.draw']??'—'}W`"></span>
+              </div>
+              <div>
+                <div class="flex justify-between text-xs text-zinc-400 mb-1">
+                  <span>VRAM</span>
+                  <span x-text="`${(g['memory.used']??0).toLocaleString()} / ${(g['memory.total']??0).toLocaleString()} MiB (${g['memory.percent']??'?'}%)`"></span>
+                </div>
+                <div class="h-2 rounded-full bg-zinc-800 overflow-hidden">
+                  <div class="h-full transition-all"
+                       :class="(g['memory.percent']??0) > 90 ? 'bg-rose-500' : (g['memory.percent']??0) > 75 ? 'bg-amber-500' : 'bg-emerald-500'"
+                       :style="`width:${g['memory.percent']??0}%`"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-xs text-zinc-400 mb-1">
+                  <span>GPU util</span><span x-text="`${g['utilization.gpu']??'?'}%`"></span>
+                </div>
+                <div class="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                  <div class="h-full bg-sky-500 transition-all" :style="`width:${g['utilization.gpu']??0}%`"></div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Token usage tile (NEW) -->
+        <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-medium">Token usage <span class="text-xs text-zinc-500">(live)</span></h2>
+            <span class="text-xs"
+                  :class="usage.available ? 'text-emerald-400' : 'text-zinc-500'"
+                  x-text="usage.available ? (usage.requests_processing > 0 ? '● generating' : '○ idle') : 'engine down'"></span>
+          </div>
+          <div class="grid grid-cols-2 gap-3 text-sm">
+            <div class="bg-zinc-950/60 rounded p-3">
+              <div class="text-xs text-zinc-400">Decode rate</div>
+              <div class="text-xl font-mono" x-text="(usage.tg_tps||0).toFixed(1) + ' t/s'"></div>
+            </div>
+            <div class="bg-zinc-950/60 rounded p-3">
+              <div class="text-xs text-zinc-400">Prompt rate</div>
+              <div class="text-xl font-mono" x-text="(usage.pp_tps||0).toFixed(1) + ' t/s'"></div>
+            </div>
+            <div class="bg-zinc-950/60 rounded p-3">
+              <div class="text-xs text-zinc-400">Generated total</div>
+              <div class="text-lg font-mono" x-text="fmtCount(usage.tg_total)"></div>
+            </div>
+            <div class="bg-zinc-950/60 rounded p-3">
+              <div class="text-xs text-zinc-400">Prompt total</div>
+              <div class="text-lg font-mono" x-text="fmtCount(usage.pp_total)"></div>
+            </div>
+            <div class="bg-zinc-950/60 rounded p-3 col-span-2">
+              <div class="flex justify-between text-xs text-zinc-400 mb-1">
+                <span>KV cache use</span>
+                <span x-text="`${((usage.kv_use||0)*100).toFixed(1)}% · ${fmtCount(usage.kv_tokens)} tok`"></span>
+              </div>
+              <div class="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                <div class="h-full bg-fuchsia-500 transition-all" :style="`width:${(usage.kv_use||0)*100}%`"></div>
+              </div>
+            </div>
+          </div>
+          <!-- inline sparkline of last 60 samples -->
+          <svg viewBox="0 0 240 40" class="mt-3 w-full h-10">
+            <polyline fill="none" stroke="rgb(52,211,153)" stroke-width="1.5"
+                      :points="usage.spark"></polyline>
+          </svg>
+        </div>
+
+        <!-- Engine power -->
+        <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
+          <h2 class="font-medium mb-3">Engine power</h2>
+          <div class="flex flex-wrap gap-2">
+            <button @click="post('/api/restart')"  class="px-3 py-1.5 rounded bg-amber-600/80 hover:bg-amber-500 text-sm">↻ Restart</button>
+            <button @click="post('/api/stop')"     class="px-3 py-1.5 rounded bg-zinc-700 hover:bg-zinc-600 text-sm">⏹ Stop</button>
+            <button @click="post('/api/start')"    class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm">▶ Start</button>
+            <button @click="rebuild()"             class="px-3 py-1.5 rounded bg-fuchsia-700 hover:bg-fuchsia-600 text-sm">⚙ Rebuild image</button>
+            <button @click="tab='autotune'"        class="px-3 py-1.5 rounded bg-cyan-700 hover:bg-cyan-600 text-sm">📐 Auto-tune</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== MODELS ================================== -->
+  <section x-show="tab === 'models'" class="space-y-6">
+    <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
+      <h2 class="font-medium mb-3">Pull a GGUF from Hugging Face</h2>
+      <div class="flex flex-wrap gap-2">
+        <input x-model="pullRepo" placeholder="repo (e.g. unsloth/Qwen3.6-35B-A3B-GGUF)"
+               class="flex-1 min-w-64 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm" />
+        <input x-model="pullFile" placeholder="filename (e.g. Qwen3.6-35B-A3B-Q4_K_M.gguf)"
+               class="flex-1 min-w-64 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm" />
+        <button @click="pullModel()" class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm">⬇ Pull</button>
+      </div>
+      <div class="mt-3 text-xs text-zinc-400">Recipes:
+        <button class="underline hover:text-zinc-200" @click="pullRepo='unsloth/Qwen3.6-35B-A3B-GGUF'; pullFile='Qwen3.6-35B-A3B-Q4_K_M.gguf'">Q4_K_M</button>
+        ·
+        <button class="underline hover:text-zinc-200" @click="pullRepo='unsloth/Qwen3.6-35B-A3B-GGUF'; pullFile='Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf'">UD-Q4_K_XL</button>
+      </div>
+    </div>
+
+    <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-zinc-900 text-zinc-400 text-xs uppercase tracking-wider">
+          <tr><th class="text-left px-4 py-2">file</th><th class="text-right px-4 py-2">size</th><th class="px-4 py-2"></th></tr>
+        </thead>
+        <tbody>
+          <template x-for="m in models" :key="m.name">
+            <tr class="border-t border-zinc-800 hover:bg-zinc-900/40">
+              <td class="px-4 py-2 font-mono text-xs" x-text="m.name"></td>
+              <td class="px-4 py-2 text-right text-zinc-400" x-text="fmtBytes(m.size_bytes)"></td>
+              <td class="px-4 py-2 text-right">
+                <button @click="cfg.model_file = m.name; saveConfig(true)" class="text-xs text-emerald-400 hover:underline">use</button>
+                ·
+                <button @click="del(m.name)" class="text-xs text-rose-400 hover:underline">delete</button>
+              </td>
+            </tr>
+          </template>
+          <tr x-show="!models.length"><td colspan="3" class="px-4 py-6 text-center text-zinc-500">no .gguf files in /models yet</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================== CLIENTS (NEW) =========================== -->
+  <section x-show="tab === 'clients'" class="space-y-6">
+
+    <!-- capabilities + base URL -->
+    <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
+      <h2 class="font-medium mb-3">Endpoint info</h2>
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+        <div><div class="text-xs text-zinc-400">Base URL</div><code class="text-emerald-300" x-text="caps.base_url || (location.origin + '/v1')"></code></div>
+        <div><div class="text-xs text-zinc-400">Model</div><code class="text-emerald-300" x-text="caps.model || '—'"></code></div>
+        <div><div class="text-xs text-zinc-400">Context</div><code class="text-zinc-200" x-text="(caps.context_length||'—').toLocaleString()+' tok'"></code></div>
+        <div><div class="text-xs text-zinc-400">Streaming</div><code class="text-zinc-200" x-text="caps.supports?.streaming ? 'yes' : 'no'"></code></div>
+        <div><div class="text-xs text-zinc-400">Tools / fn-calls</div><code class="text-zinc-200" x-text="caps.supports?.tools ? 'yes' : 'no'"></code></div>
+        <div><div class="text-xs text-zinc-400">Vision</div><code class="text-zinc-200" x-text="caps.supports?.vision ? 'yes' : 'no'"></code></div>
+        <div><div class="text-xs text-zinc-400">Auth</div><code class="text-zinc-200" x-text="caps.auth?.required ? 'Bearer key required' : 'open (LAN-trust)'"></code></div>
+        <div><div class="text-xs text-zinc-400">KV quant</div><code class="text-zinc-200" x-text="caps.kv_cache_type || '—'"></code></div>
+        <div><div class="text-xs text-zinc-400">FlashAttn</div><code class="text-zinc-200" x-text="caps.flash_attention || '—'"></code></div>
+      </div>
+    </div>
+
+    <!-- API keys -->
+    <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-medium">API keys</h2>
+        <span class="text-xs text-zinc-500">Used by clients calling <code>/v1/*</code></span>
+      </div>
+      <div class="flex gap-2 mb-4">
+        <input x-model="newKeyName" placeholder="name (e.g. openwebui-prod)"
+               class="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm" />
+        <button @click="createKey()" class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm">+ Generate key</button>
+      </div>
+      <template x-if="lastNewKey">
+        <div class="bg-emerald-500/10 border border-emerald-500/30 text-emerald-200 rounded p-3 mb-4 text-sm">
+          <div class="font-medium mb-1">New key — save it now, you won't see it again:</div>
+          <div class="flex items-center gap-2">
+            <code class="font-mono break-all flex-1" x-text="lastNewKey"></code>
+            <button @click="copy(lastNewKey)" class="px-2 py-1 rounded bg-emerald-600 text-xs">copy</button>
+            <button @click="lastNewKey=''" class="px-2 py-1 rounded bg-zinc-700 text-xs">dismiss</button>
+          </div>
+        </div>
+      </template>
+
+      <table class="w-full text-sm">
+        <thead class="text-zinc-400 text-xs">
+          <tr>
+            <th class="text-left px-3 py-2">name</th>
+            <th class="text-left px-3 py-2">id</th>
+            <th class="text-left px-3 py-2">key</th>
+            <th class="text-left px-3 py-2">created</th>
+            <th class="text-left px-3 py-2">last used</th>
+            <th class="px-3 py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="k in apiKeys" :key="k.id">
+            <tr class="border-t border-zinc-800">
+              <td class="px-3 py-2" x-text="k.name"></td>
+              <td class="px-3 py-2 font-mono text-xs text-zinc-400" x-text="k.id"></td>
+              <td class="px-3 py-2 font-mono text-xs" x-text="k.key_preview"></td>
+              <td class="px-3 py-2 text-xs text-zinc-400" x-text="fmtTime(k.created_at)"></td>
+              <td class="px-3 py-2 text-xs text-zinc-400" x-text="fmtTime(k.last_used_at)"></td>
+              <td class="px-3 py-2 text-right">
+                <button @click="revokeKey(k)" class="text-xs text-rose-400 hover:underline">revoke</button>
+              </td>
+            </tr>
+          </template>
+          <tr x-show="!apiKeys.length">
+            <td colspan="6" class="px-3 py-6 text-center text-zinc-500">
+              No keys yet — <code>/v1</code> is open to anyone on this network.<br>
+              Create one to lock it down.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- copy-paste config snippets -->
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium">Open WebUI</h3>
+          <button @click="copy(snippetOpenWebUI())" class="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">copy</button>
+        </div>
+        <pre class="text-xs bg-black/60 rounded p-3 overflow-x-auto" x-text="snippetOpenWebUI()"></pre>
+      </div>
+
+      <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium">curl</h3>
+          <button @click="copy(snippetCurl())" class="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">copy</button>
+        </div>
+        <pre class="text-xs bg-black/60 rounded p-3 overflow-x-auto" x-text="snippetCurl()"></pre>
+      </div>
+
+      <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium">Python (openai package)</h3>
+          <button @click="copy(snippetPython())" class="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">copy</button>
+        </div>
+        <pre class="text-xs bg-black/60 rounded p-3 overflow-x-auto" x-text="snippetPython()"></pre>
+      </div>
+
+      <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium">OpenClaw / generic OpenAI-compatible</h3>
+          <button @click="copy(snippetGeneric())" class="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">copy</button>
+        </div>
+        <pre class="text-xs bg-black/60 rounded p-3 overflow-x-auto" x-text="snippetGeneric()"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== LOGS ==================================== -->
+  <section x-show="tab === 'logs'" class="space-y-3">
+    <div class="flex gap-2">
+      <button @click="logsPaused = !logsPaused"
+              :class="logsPaused ? 'bg-amber-600' : 'bg-zinc-800'"
+              class="px-3 py-1.5 rounded text-sm" x-text="logsPaused ? '▶ resume' : '⏸ pause'"></button>
+      <button @click="logs = ''" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">🗑 clear view</button>
+      <button @click="reconnectLogs()" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">↻ reconnect</button>
+      <span class="text-xs text-zinc-500 self-center" x-text="`${logs.length.toLocaleString()} chars buffered`"></span>
+    </div>
+    <pre class="bg-black border border-zinc-800 rounded-xl p-4 h-[60vh] overflow-auto text-xs whitespace-pre-wrap" x-text="logs"></pre>
+  </section>
+
+  <!-- ============================== BUILD =================================== -->
+  <section x-show="tab === 'build'" class="space-y-3">
+    <div class="flex gap-2">
+      <button @click="buildLog = ''" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">🗑 clear view</button>
+    </div>
+    <p class="text-sm text-zinc-400">Build output from <code>POST /api/rebuild</code>. Click Rebuild on the Status tab to start one.</p>
+    <pre class="bg-black border border-zinc-800 rounded-xl p-4 h-[60vh] overflow-auto text-xs whitespace-pre-wrap" x-text="buildLog"></pre>
+  </section>
+
+  <!-- ============================== AUTOTUNE ================================ -->
+  <section x-show="tab === 'autotune'" class="space-y-4">
+    <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
+      <h2 class="font-medium mb-3">Auto-tune <code>--n-cpu-moe</code></h2>
+      <p class="text-xs text-zinc-400 mb-3">
+        Sweeps values via <code>llama-bench</code>, picks the fastest non-OOM result (with a 3% bias toward higher
+        <code>--n-cpu-moe</code> for VRAM headroom), and applies it. The engine is stopped during the sweep.
+      </p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        <label class="space-y-1">
+          <span class="text-zinc-400">Sweep (CSV)</span>
+          <input x-model="at.sweep" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 font-mono text-xs" />
+        </label>
+        <label class="space-y-1">
+          <span class="text-zinc-400">PP tokens</span>
+          <input type="number" x-model.number="at.pp" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
+        </label>
+        <label class="space-y-1">
+          <span class="text-zinc-400">TG tokens</span>
+          <input type="number" x-model.number="at.tg" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
+        </label>
+        <label class="space-y-1">
+          <span class="text-zinc-400">Threads (0=auto)</span>
+          <input type="number" x-model.number="at.threads" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
+        </label>
+      </div>
+      <label class="flex items-center gap-2 mt-3 text-sm">
+        <input type="checkbox" x-model="at.applyBest" class="accent-emerald-500" />
+        Apply the best value automatically and restart the engine
+      </label>
+      <div class="flex items-center gap-3 mt-4">
+        <button @click="startAutotune()" :disabled="at.running"
+                class="px-4 py-1.5 rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-sm">
+          <span x-show="!at.running">▶ Start sweep</span>
+          <span x-show="at.running">running…</span>
+        </button>
+        <span class="text-xs text-zinc-500" x-text="at.status"></span>
+      </div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 overflow-hidden">
+        <div class="px-4 py-2 text-xs uppercase tracking-wider text-zinc-400 bg-zinc-900">Sweep results</div>
+        <table class="w-full text-sm">
+          <thead class="text-zinc-400 text-xs">
+            <tr><th class="text-left px-4 py-2">--n-cpu-moe</th><th class="text-right px-4 py-2">tg t/s</th><th class="text-right px-4 py-2">pp t/s</th><th class="text-center px-4 py-2"></th></tr>
+          </thead>
+          <tbody>
+            <template x-for="r in at.results" :key="r.n_cpu_moe">
+              <tr class="border-t border-zinc-800"
+                  :class="at.best && at.best.n_cpu_moe === r.n_cpu_moe ? 'bg-emerald-500/10' : ''">
+                <td class="px-4 py-2 font-mono" x-text="r.n_cpu_moe"></td>
+                <td class="px-4 py-2 text-right" x-text="r.tg_tps?.toFixed(2) || '—'"></td>
+                <td class="px-4 py-2 text-right" x-text="r.pp_tps?.toFixed(2) || '—'"></td>
+                <td class="px-4 py-2 text-center">
+                  <span x-show="r.ok" class="text-emerald-400">ok</span>
+                  <span x-show="!r.ok && r.error" class="text-rose-400" :title="r.error">OOM/err</span>
+                  <span x-show="r.pending" class="text-zinc-500">…</span>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="!at.results.length"><td colspan="4" class="px-4 py-6 text-center text-zinc-500">no results yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 overflow-hidden">
+        <div class="px-4 py-2 text-xs uppercase tracking-wider text-zinc-400 bg-zinc-900 flex items-center justify-between">
+          <span>Event log</span>
+          <button @click="at.log=''" class="text-xs text-zinc-300 hover:text-white">🗑 clear</button>
+        </div>
+        <pre class="bg-black p-4 h-72 overflow-auto text-xs whitespace-pre-wrap" x-text="at.log"></pre>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+function llamador() {
+  return {
+    tabs: ['status', 'models', 'clients', 'logs', 'build', 'autotune'],
+    tab: 'status',
+    status: {},
+    gpu: { available: false, gpus: [] },
+    cfg: {},
+    models: [],
+    saveMsg: '',
+    pullRepo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+    pullFile: 'Qwen3.6-35B-A3B-Q4_K_M.gguf',
+    logs: '',
+    logsPaused: false,
+    buildLog: '',
+    kvTypes: ['f32','f16','q8_0','q4_0','q4_1','q5_0','q5_1','turbo3','turbo4'],
+    apiBase: '',
+    _ws: null,
+
+    // usage
+    usage: { available:false, tg_total:0, pp_total:0, tg_tps:0, pp_tps:0, kv_use:0, kv_tokens:0, requests_processing:0, spark:'' },
+    _lastUsage: null,
+    _sparkBuf: [],
+
+    // clients tab
+    caps: {},
+    apiKeys: [],
+    newKeyName: '',
+    lastNewKey: '',
+
+    // autotune
+    at: {
+      sweep: '48,40,36,32,28,24,20',
+      pp: 512, tg: 128, threads: 0, applyBest: true,
+      running: false, status: '',
+      results: [], best: null, log: '',
+    },
+
+    async boot() {
+      await this.refresh();
+      await this.refreshGPU();
+      await this.refreshUsage();
+      await this.refreshClients();
+      this.connectLogs();
+      setInterval(() => this.refresh(), 5000);
+      setInterval(() => this.refreshGPU(), 2000);
+      setInterval(() => this.refreshUsage(), 1000);
+    },
+
+    async refresh() {
+      try {
+        const s = await fetch(this.apiBase + '/api/status').then(r => r.json());
+        this.status = s; this.cfg = s.config; this.models = s.models;
+      } catch {}
+    },
+
+    async refreshGPU() {
+      try { this.gpu = await fetch(this.apiBase + '/api/gpu').then(r => r.json()); } catch {}
+    },
+
+    async refreshUsage() {
+      try {
+        const u = await fetch(this.apiBase + '/api/usage').then(r => r.json());
+        if (!u.available) { this.usage = { ...this.usage, available:false }; return; }
+        const c = u.counters;
+        // Derive instantaneous t/s from deltas of the *_seconds_total counters.
+        let tg_tps = 0, pp_tps = 0;
+        if (this._lastUsage) {
+          const dtg_tok = c.tokens_predicted_total - this._lastUsage.tokens_predicted_total;
+          const dtg_sec = c.predict_seconds_total - this._lastUsage.predict_seconds_total;
+          const dpp_tok = c.prompt_tokens_total    - this._lastUsage.prompt_tokens_total;
+          const dpp_sec = c.prompt_seconds_total   - this._lastUsage.prompt_seconds_total;
+          if (dtg_sec > 0.001) tg_tps = dtg_tok / dtg_sec;
+          if (dpp_sec > 0.001) pp_tps = dpp_tok / dpp_sec;
+        }
+        // sparkline of decode rate, last 60 samples
+        this._sparkBuf.push(tg_tps);
+        if (this._sparkBuf.length > 60) this._sparkBuf.shift();
+        const max = Math.max(1, ...this._sparkBuf);
+        const spark = this._sparkBuf.map((v,i) =>
+          `${(i / (this._sparkBuf.length - 1 || 1)) * 240},${40 - (v / max) * 38}`
+        ).join(' ');
+
+        this.usage = {
+          available: true,
+          tg_total: c.tokens_predicted_total,
+          pp_total: c.prompt_tokens_total,
+          tg_tps, pp_tps,
+          kv_use:    c.kv_cache_usage,
+          kv_tokens: c.kv_cache_tokens,
+          requests_processing: c.requests_processing,
+          spark,
+        };
+        this._lastUsage = c;
+      } catch { this.usage = { ...this.usage, available:false }; }
+    },
+
+    async refreshClients() {
+      try {
+        const [caps, k] = await Promise.all([
+          fetch(this.apiBase + '/api/capabilities').then(r => r.json()),
+          fetch(this.apiBase + '/api/keys').then(r => r.json()),
+        ]);
+        this.caps = caps;
+        this.apiKeys = k;
+      } catch {}
+    },
+
+    async post(path) {
+      const r = await fetch(this.apiBase + path, { method: 'POST' });
+      if (!r.ok) alert('failed: ' + r.status);
+      setTimeout(() => this.refresh(), 800);
+    },
+
+    async saveConfig(restart) {
+      this.saveMsg = 'saving…';
+      const r = await fetch(this.apiBase + '/api/config?restart=' + (restart ? 'true' : 'false'), {
+        method: 'PUT',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify(this.cfg),
+      });
+      this.saveMsg = r.ok ? (restart ? 'saved & restarted' : 'saved') : ('error ' + r.status);
+      setTimeout(() => { this.saveMsg = ''; this.refresh(); this.refreshClients(); }, 2500);
+    },
+
+    async pullModel() {
+      const url = `${this.apiBase}/api/models/pull?repo=${encodeURIComponent(this.pullRepo)}&filename=${encodeURIComponent(this.pullFile)}`;
+      const r = await fetch(url, { method: 'POST' });
+      if (!r.ok) return alert('pull failed');
+      this.tab = 'models';
+    },
+
+    async del(name) {
+      if (!confirm('delete ' + name + '?')) return;
+      await fetch(this.apiBase + '/api/models/' + encodeURIComponent(name), { method: 'DELETE' });
+      this.refresh();
+    },
+
+    async rebuild() {
+      const { task_id } = await fetch(this.apiBase + '/api/rebuild', { method: 'POST' }).then(r => r.json());
+      this.buildLog = `[ui] tailing ${task_id}\n`;
+      this.tab = 'build';
+      const ws = new WebSocket(this.wsUrl('/api/build/' + task_id));
+      ws.onmessage = e => { this.buildLog += e.data; };
+      ws.onclose = () => { this.buildLog += '\n[ui] build stream closed\n'; this.refresh(); };
+    },
+
+    connectLogs() {
+      try { if (this._ws) this._ws.close(); } catch {}
+      this._ws = new WebSocket(this.wsUrl('/api/logs'));
+      this._ws.onmessage = e => { if (!this.logsPaused) this.logs += e.data; };
+      this._ws.onclose = () => setTimeout(() => this.connectLogs(), 2000);
+    },
+    reconnectLogs() { this.connectLogs(); },
+
+    wsUrl(path) {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      return `${proto}://${location.host}${path}`;
+    },
+
+    fmtBytes(n) {
+      if (!n) return '0';
+      const u = ['B','KB','MB','GB','TB']; let i = 0;
+      while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+      return n.toFixed(n < 10 ? 2 : 1) + ' ' + u[i];
+    },
+    fmtCount(n) {
+      if (!n) return '0';
+      if (n >= 1e9) return (n/1e9).toFixed(2) + 'B';
+      if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+      if (n >= 1e3) return (n/1e3).toFixed(1) + 'k';
+      return Math.round(n).toString();
+    },
+    fmtTime(t) {
+      if (!t) return '—';
+      return new Date(t * 1000).toLocaleString();
+    },
+
+    // -------- clients tab ----------------------------------------------
+    async createKey() {
+      const name = (this.newKeyName || 'unnamed').trim();
+      const r = await fetch(this.apiBase + '/api/keys', {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({ name }),
+      });
+      if (!r.ok) { alert('create failed'); return; }
+      const rec = await r.json();
+      this.lastNewKey = rec.key;
+      this.newKeyName = '';
+      this.refreshClients();
+      this.refresh();
+    },
+    async revokeKey(k) {
+      if (!confirm(`Revoke "${k.name}" (${k.id})? Existing clients will get 401.`)) return;
+      await fetch(this.apiBase + '/api/keys/' + k.id, { method: 'DELETE' });
+      this.refreshClients();
+      this.refresh();
+    },
+    copy(s) {
+      try { navigator.clipboard.writeText(s); } catch { prompt('copy:', s); }
+    },
+
+    snippetOpenWebUI() {
+      const url = this.caps.base_url || (location.origin + '/v1');
+      const m   = this.caps.model    || 'qwen3.6-35b-a3b';
+      return [
+        '# Open WebUI → Settings → Connections → OpenAI API',
+        `Base URL : ${url}`,
+        `API Key  : ${this.lastNewKey || (this.apiKeys[0] && '<paste a key>') || '<not required>'}`,
+        '',
+        '# Then in Chat, pick the model:',
+        `Model    : ${m}`,
+      ].join('\n');
+    },
+    snippetCurl() {
+      const url = this.caps.base_url || (location.origin + '/v1');
+      const m   = this.caps.model    || 'qwen3.6-35b-a3b';
+      const k   = this.lastNewKey || (this.apiKeys[0] ? '$LLAMADOR_KEY' : '');
+      const auth = k ? `\\\n  -H 'Authorization: Bearer ${k}' ` : '';
+      return `curl -s ${url}/chat/completions \\\n  -H 'Content-Type: application/json' ${auth}\\\n  -d '{"model":"${m}","messages":[{"role":"user","content":"Hello!"}]}'`;
+    },
+    snippetPython() {
+      const url = this.caps.base_url || (location.origin + '/v1');
+      const m   = this.caps.model    || 'qwen3.6-35b-a3b';
+      const k   = this.lastNewKey || (this.apiKeys[0] ? 'os.environ["LLAMADOR_KEY"]' : '"sk-no-key-required"');
+      return [
+        'from openai import OpenAI',
+        `client = OpenAI(base_url="${url}", api_key=${k.startsWith('sk-') ? `"${k}"` : k})`,
+        '',
+        'r = client.chat.completions.create(',
+        `    model="${m}",`,
+        '    messages=[{"role":"user","content":"Hello!"}],',
+        '    stream=False,',
+        ')',
+        'print(r.choices[0].message.content)',
+      ].join('\n');
+    },
+    snippetGeneric() {
+      const url = this.caps.base_url || (location.origin + '/v1');
+      const m   = this.caps.model    || 'qwen3.6-35b-a3b';
+      const k   = this.lastNewKey || (this.apiKeys[0] ? '<your key>' : '<not required>');
+      return [
+        '# Any OpenAI-compatible client (OpenClaw, Continue, LangChain, etc.)',
+        `OPENAI_API_BASE = "${url}"`,
+        `OPENAI_API_KEY  = "${k}"`,
+        `MODEL           = "${m}"`,
+        `# context        = ${this.caps.context_length || '?'} tokens`,
+        `# tools          = ${this.caps.supports?.tools ? 'yes' : 'no'}`,
+        `# vision         = ${this.caps.supports?.vision ? 'yes' : 'no'}`,
+      ].join('\n');
+    },
+
+    // -------- autotune --------------------------------------------------
+    async startAutotune() {
+      if (this.at.running) return;
+      this.at.results = this.at.sweep.split(',').map(s => ({
+        n_cpu_moe: parseInt(s.trim(), 10), pending: true, ok: false,
+      }));
+      this.at.best = null; this.at.log = '';
+      this.at.running = true; this.at.status = 'starting…';
+
+      const params = new URLSearchParams({
+        sweep: this.at.sweep, pp: this.at.pp, tg: this.at.tg,
+        threads: this.at.threads, apply_best: this.at.applyBest,
+      });
+      let task_id;
+      try {
+        const r = await fetch(this.apiBase + '/api/autotune?' + params, { method: 'POST' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        ({ task_id } = await r.json());
+      } catch (e) {
+        this.at.running = false; this.at.status = 'failed: ' + e.message; return;
+      }
+      this.at.status = 'task ' + task_id;
+      const ws = new WebSocket(this.wsUrl(`/api/autotune/${task_id}/ws`));
+      ws.onmessage = e => {
+        const msg = JSON.parse(e.data);
+        this.at.log += JSON.stringify(msg) + '\n';
+        if (msg.type === 'step_start') {
+          const row = this.at.results.find(r => r.n_cpu_moe === msg.n_cpu_moe);
+          if (row) row.pending = true;
+          this.at.status = `bench --n-cpu-moe ${msg.n_cpu_moe}`;
+        } else if (msg.type === 'step_end') {
+          const row = this.at.results.find(r => r.n_cpu_moe === msg.n_cpu_moe);
+          if (row) Object.assign(row, { pending:false, ok: msg.ok, tg_tps: msg.tg_tps, pp_tps: msg.pp_tps, error: msg.error });
+        } else if (msg.type === 'best') {
+          this.at.best = { n_cpu_moe: msg.n_cpu_moe, tg_tps: msg.tg_tps };
+          this.at.status = `best: ${msg.n_cpu_moe} @ ${msg.tg_tps?.toFixed(2)} t/s`;
+        } else if (msg.type === 'applied') {
+          this.at.status += ' (applied)'; this.refresh();
+        } else if (msg.type === 'done') {
+          this.at.running = false;
+          this.at.status = msg.error ? ('error: ' + msg.error) : (this.at.status + ' · done');
+          this.refresh();
+        }
+      };
+      ws.onclose = () => { this.at.running = false; };
+      ws.onerror = () => { this.at.running = false; this.at.status = 'ws error'; };
+    },
+  };
+}
+</script>
+</body>
+</html>

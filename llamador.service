@@ -1,0 +1,32 @@
+# systemd unit for llamador. Installed by `./deploy.sh --systemd`.
+# WorkingDirectory + User + Group are patched in by the installer.
+
+[Unit]
+Description=llamador — TurboQuant llama.cpp control plane
+Documentation=https://github.com/Raskitoma/llamador
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/llamador
+User=raskitoma
+Group=raskitoma
+
+# Bring the stack up on boot, leave it running.
+ExecStart=/usr/bin/docker compose up -d
+# Tear it down on shutdown (faster + cleaner than letting docker reap).
+ExecStop=/usr/bin/docker compose down
+# `systemctl reload llamador` does a rolling re-up that picks up .env changes
+# without recreating the volumes.
+ExecReload=/usr/bin/docker compose up -d --force-recreate --no-deps llama-engine
+
+# Wait long enough for the engine to load a 20+ GB GGUF before considering
+# the unit failed.
+TimeoutStartSec=600
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

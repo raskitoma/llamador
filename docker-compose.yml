@@ -1,0 +1,172 @@
+# llamador — TurboQuant llama.cpp + Qwen3.6 + control plane
+#
+# Default stack (always-on):
+#   llama-engine   GPU inference server         :8080  (proxied via Caddy)
+#   backend        FastAPI control plane        :8000  (proxied via Caddy)
+#   frontend       Static SPA                   :80    (proxied via Caddy)
+#   caddy          Reverse proxy                :8088
+#
+# Optional profiles:
+#   --profile chat       open-webui (web chat UI)        :3000
+#   --profile metrics    prometheus + grafana            :9090, :3001
+#   --profile public     swap Caddy to public-facing TLS (Let's Encrypt)
+#
+# Usage:
+#   docker compose up -d                       # default stack
+#   docker compose --profile chat up -d        # add open-webui
+#   docker compose --profile metrics up -d     # add monitoring
+#
+name: llamador
+
+services:
+
+  # =========================================================== llama-engine
+  llama-engine:
+    build:
+      context: ./llama-engine
+      args:
+        CUDA_VERSION: ${CUDA_VERSION:-12.4.1}
+        CUDA_ARCH: ${CUDA_ARCH:-61}
+        TURBOQUANT_BRANCH: ${TURBOQUANT_BRANCH:-feature/turboquant-kv-cache}
+    image: llamador/llama-engine:local
+    container_name: llamador-engine
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      MODEL_FILE: /models/${MODEL_FILE:-Qwen3.6-35B-A3B-Q4_K_M.gguf}
+      ALIAS:      ${ALIAS:-qwen3.6-35b-a3b}
+      NGL:        ${NGL:-999}
+      N_CPU_MOE:  ${N_CPU_MOE:-30}
+      CTX:        ${CTX:-8192}
+      KV_TYPE:    ${KV_TYPE:-q8_0}
+      FLASH_ATTN: ${FLASH_ATTN:-on}
+      THREADS:    ${THREADS:-auto}
+      BATCH:      ${BATCH:-2048}
+      UBATCH:     ${UBATCH:-2048}
+      EXTRA_ARGS: ${EXTRA_ARGS:-}
+      # Pascal MMQ tuning is in the Dockerfile, no need to repeat here.
+    volumes:
+      - ${MODELS_DIR:-./data/models}:/models
+      - ${CONFIG_DIR:-./data/config}:/config
+    expose:
+      - "8080"
+    ulimits:
+      memlock: -1   # --mlock requires unlimited LIMIT_MEMLOCK
+    networks: [llamador]
+    # On Pascal hosts, FA may panic in rare paths; that's why restart is on.
+
+  # ================================================================ backend
+  backend:
+    build:
+      context: ./backend
+    image: llamador/backend:local
+    container_name: llamador-backend
+    restart: unless-stopped
+    depends_on:
+      - llama-engine
+    environment:
+      ENGINE_URL: http://llama-engine:8080
+      ENGINE_SERVICE: llama-engine
+      COMPOSE_PROJECT: llamador
+      MODELS_DIR: /models
+      CONFIG_DIR: /config
+      HF_TOKEN: ${HF_TOKEN:-}
+      API_TOKEN: ${API_TOKEN:-}
+    volumes:
+      - ${MODELS_DIR:-./data/models}:/models
+      - ${CONFIG_DIR:-./data/config}:/config
+      # Mounted so the backend can rebuild the engine image (long-running task).
+      - ./llama-engine:/workspace/llama-engine:ro
+      # Docker socket access lets the backend inspect/restart/build.
+      - /var/run/docker.sock:/var/run/docker.sock
+    expose:
+      - "8000"
+    networks: [llamador]
+
+  # =============================================================== frontend
+  frontend:
+    build:
+      context: ./frontend
+    image: llamador/frontend:local
+    container_name: llamador-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks: [llamador]
+
+  # ================================================================== caddy
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: llamador-caddy
+    restart: unless-stopped
+    depends_on: [backend, frontend, llama-engine]
+    ports:
+      - "${CADDY_PORT:-8088}:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [llamador]
+
+  # ============================================ optional: open-webui chat UI
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: llamador-openwebui
+    restart: unless-stopped
+    profiles: [chat]
+    depends_on: [llama-engine]
+    environment:
+      OPENAI_API_BASE_URL: http://llama-engine:8080/v1
+      OPENAI_API_KEY: sk-no-key-required
+      WEBUI_AUTH: "false"
+    ports:
+      - "${OPENWEBUI_PORT:-3000}:8080"
+    volumes:
+      - openwebui_data:/app/backend/data
+    networks: [llamador]
+
+  # ================================================ optional: prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: llamador-prom
+    restart: unless-stopped
+    profiles: [metrics]
+    volumes:
+      - ./caddy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom_data:/prometheus
+    ports:
+      - "${PROM_PORT:-9090}:9090"
+    networks: [llamador]
+
+  # ================================================== optional: grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: llamador-grafana
+    restart: unless-stopped
+    profiles: [metrics]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks: [llamador]
+
+
+networks:
+  llamador:
+    name: llamador
+
+volumes:
+  caddy_data:
+  caddy_config:
+  openwebui_data:
+  prom_data:
+  grafana_data:

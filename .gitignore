@@ -1,0 +1,33 @@
+# env / secrets
+.env
+.env.local
+*.local
+
+# host data
+data/
+models/
+*.gguf
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# build artifacts
+build/
+dist/
+*.log
+node_modules/
+
+# docker
+.docker/

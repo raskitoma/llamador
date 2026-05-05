@@ -1,0 +1,65 @@
+# Caddyfile — single-port front door for the whole stack.
+#
+# Default site is HTTP on :80 inside the container, mapped to :${CADDY_PORT}
+# on the host (default 8088). Swap to your domain + auto-TLS by editing the
+# site address — Caddy will fetch a Let's Encrypt cert automatically.
+
+{
+    auto_https off          # disable until you give Caddy a real domain
+    admin off
+    servers {
+        protocols h1 h2 h2c
+    }
+}
+
+:80 {
+    # WebSocket upgrade pass-through is automatic in Caddy v2.
+
+    # /api/* → backend (FastAPI). WebSockets included.
+    handle_path /api/* {
+        reverse_proxy backend:8000 {
+            transport http {
+                read_timeout 0
+                write_timeout 0
+            }
+        }
+    }
+
+    # /v1/* → backend (so the API-key gate runs). The backend then proxies
+    # to llama-engine. If you want to skip the auth hop entirely (LAN-only,
+    # no key store), point this directly at llama-engine:8080.
+    handle_path /v1/* {
+        reverse_proxy backend:8000 {
+            transport http {
+                read_timeout 0
+                write_timeout 0
+            }
+            # Don't strip /v1 — the backend handles the full path.
+            rewrite /v1/{http.request.uri.path}{?{query}}
+        }
+    }
+
+    # Engine /metrics directly (Prometheus scrape).
+    handle_path /metrics {
+        reverse_proxy llama-engine:8080
+    }
+
+    # WebSocket-bearing API paths. Caddy handles upgrade automatically;
+    # we just need to route them. /api/* already does — this block is
+    # documentation of the WS endpoints the frontend uses.
+    @ws path /api/logs /api/build/* /api/autotune/*/ws
+    handle @ws {
+        reverse_proxy backend:8000
+    }
+
+    # Anything else → static frontend.
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    encode zstd gzip
+    log {
+        format console
+        level INFO
+    }
+}

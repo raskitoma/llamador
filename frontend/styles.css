@@ -1,0 +1,14 @@
+/* Tiny stylesheet for tweaks Tailwind via CDN can't easily express. */
+html, body { height: 100%; }
+
+/* Restrain Alpine flicker on initial load before x-show evaluates. */
+[x-cloak] { display: none !important; }
+
+/* Make <pre> log views feel like a terminal. */
+pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+
+/* Better focus rings on the dark theme. */
+input:focus, select:focus, button:focus-visible {
+  outline: 2px solid rgba(16, 185, 129, 0.6);
+  outline-offset: 1px;
+}
