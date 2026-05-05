@@ -101,10 +101,37 @@ class ModelManager:
         Thread(target=_run, daemon=True, name=task_id).start()
         return task_id
 
+    def _attach_bytes(self, t: dict) -> dict:
+        """Add bytes_downloaded to a task snapshot by stat'ing on-disk artefacts.
+
+        hf_hub_download (and hf_transfer) write to a temp path that contains
+        the target filename, then move into place. Looking at any file in
+        models_dir whose name contains the target filename catches both the
+        in-flight temp and the finished file.
+        """
+        target = t["file"]
+        bytes_so_far = 0
+        try:
+            for p in self.settings.models_dir.iterdir():
+                if target in p.name:
+                    try:
+                        bytes_so_far = max(bytes_so_far, p.stat().st_size)
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        t["bytes_downloaded"] = bytes_so_far
+        return t
+
     def get_task(self, task_id: str) -> dict | None:
         with self._lock:
-            return self._tasks.get(task_id)
+            t = self._tasks.get(task_id)
+            if t is None:
+                return None
+            t = dict(t)  # snapshot before releasing the lock
+        return self._attach_bytes(t)
 
     def list_tasks(self) -> list[dict]:
         with self._lock:
-            return [{"id": k, **v} for k, v in self._tasks.items()]
+            tasks = [{"id": k, **v} for k, v in self._tasks.items()]
+        return [self._attach_bytes(t) for t in tasks]

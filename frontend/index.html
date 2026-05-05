@@ -224,6 +224,31 @@
       </div>
     </div>
 
+    <!-- Active pull tasks (HF download progress) -->
+    <div x-show="pullTasks.length" class="rounded-xl bg-zinc-900/60 border border-zinc-800 overflow-hidden">
+      <div class="px-4 py-2 bg-zinc-900 text-zinc-400 text-xs uppercase tracking-wider">downloads</div>
+      <ul class="divide-y divide-zinc-800">
+        <template x-for="t in pullTasks" :key="t.id">
+          <li class="px-4 py-2 flex items-center gap-3 text-sm">
+            <span class="w-2 h-2 rounded-full"
+                  :class="t.state === 'running' ? 'bg-amber-400 animate-pulse'
+                                                : t.state === 'done'    ? 'bg-emerald-400'
+                                                                        : 'bg-rose-400'"></span>
+            <span class="font-mono text-xs flex-1 truncate" x-text="t.file"></span>
+            <span class="text-xs text-zinc-400" x-text="fmtBytes(t.bytes_downloaded || 0)"></span>
+            <span class="text-xs"
+                  :class="t.state === 'running' ? 'text-amber-300'
+                                                : t.state === 'done'    ? 'text-emerald-300'
+                                                                        : 'text-rose-300'"
+                  x-text="t.state === 'running' ? 'downloading…' : t.state"></span>
+            <span x-show="t.error" class="text-xs text-rose-400 truncate max-w-xs" x-text="t.error"></span>
+            <button x-show="t.state !== 'running'" @click="dismissPullTask(t.id)"
+                    class="text-xs text-zinc-500 hover:text-zinc-300">✕</button>
+          </li>
+        </template>
+      </ul>
+    </div>
+
     <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 overflow-hidden">
       <table class="w-full text-sm">
         <thead class="bg-zinc-900 text-zinc-400 text-xs uppercase tracking-wider">
@@ -470,6 +495,8 @@ function llamador() {
     saveMsg: '',
     pullRepo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
     pullFile: 'Qwen3.6-35B-A3B-Q4_K_M.gguf',
+    pullTasks: [],          // running/done/error pull tasks shown above models table
+    _pullPollTimer: null,
     logs: '',
     logsPaused: false,
     buildLog: '',
@@ -587,7 +614,38 @@ function llamador() {
       const url = `${this.apiBase}/api/models/pull?repo=${encodeURIComponent(this.pullRepo)}&filename=${encodeURIComponent(this.pullFile)}`;
       const r = await fetch(url, { method: 'POST' });
       if (!r.ok) return alert('pull failed');
+      const { task_id } = await r.json();
+      // Optimistic insert so the user sees something immediately; the poller
+      // will overwrite on the next tick with the real state from the backend.
+      const existing = this.pullTasks.find(t => t.id === task_id);
+      if (!existing) {
+        this.pullTasks.unshift({ id: task_id, state: 'running', file: this.pullFile, repo: this.pullRepo, bytes_downloaded: 0 });
+      }
       this.tab = 'models';
+      this.startPullPoller();
+    },
+
+    startPullPoller() {
+      if (this._pullPollTimer) return;
+      const tick = async () => {
+        try {
+          const tasks = await fetch(this.apiBase + '/api/tasks').then(r => r.json());
+          // Keep only HF pulls. Build/autotune tasks live elsewhere in the UI.
+          this.pullTasks = tasks.filter(t => String(t.id).startsWith('pull-'));
+        } catch {}
+        // Stop polling once nothing is in flight; keep last completed entries visible.
+        if (!this.pullTasks.some(t => t.state === 'running')) {
+          clearInterval(this._pullPollTimer);
+          this._pullPollTimer = null;
+          this.refresh();   // refresh models list so the new file shows up
+        }
+      };
+      tick();
+      this._pullPollTimer = setInterval(tick, 2000);
+    },
+
+    dismissPullTask(id) {
+      this.pullTasks = this.pullTasks.filter(t => t.id !== id);
     },
 
     async del(name) {
