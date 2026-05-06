@@ -12,6 +12,58 @@
 <body class="text-zinc-100 antialiased font-sans">
 <div x-data="llamador()" x-init="boot()" class="max-w-7xl mx-auto p-6 space-y-6">
 
+  <!-- ============ Themed dialog (replaces alert/confirm/prompt) ============ -->
+  <div x-show="dialog" x-transition.opacity
+       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+       @keydown.escape.window="_dialogCancel()"
+       @click.self="_dialogCancel()">
+    <div x-show="dialog" x-transition
+         class="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl w-full max-w-md p-5 space-y-4">
+      <div class="flex items-start gap-3">
+        <span class="text-2xl shrink-0"
+              x-text="dialog?.kind === 'confirm' ? '⚠️' : (dialog?.kind === 'prompt' ? '✏️' : 'ℹ️')"></span>
+        <div class="flex-1 min-w-0">
+          <h3 class="font-medium text-zinc-100" x-text="dialog?.title"></h3>
+          <p class="text-sm text-zinc-400 mt-1 whitespace-pre-wrap break-words" x-text="dialog?.message"></p>
+        </div>
+      </div>
+      <input x-show="dialog?.kind === 'prompt'" x-model="dialog && dialog.value"
+             aria-label="dialog input"
+             :placeholder="dialog?.placeholder || 'value'"
+             @keydown.enter.prevent="_dialogOk()"
+             x-init="$nextTick(() => $el.focus())"
+             class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono" />
+      <div class="flex justify-end gap-2 pt-1">
+        <button type="button" x-show="dialog?.kind !== 'alert'"
+                @click="_dialogCancel()"
+                aria-label="cancel"
+                class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm"
+                x-text="dialog?.cancelText || 'Cancel'"></button>
+        <button type="button" @click="_dialogOk()"
+                aria-label="confirm"
+                :class="dialog?.okClass || 'bg-emerald-600 hover:bg-emerald-500'"
+                class="px-3 py-1.5 rounded text-sm" x-text="dialog?.okText || 'OK'"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Toast stack (replaces notification-style alerts) ============ -->
+  <div class="fixed top-4 right-4 z-40 flex flex-col gap-2 max-w-sm pointer-events-none">
+    <template x-for="t in toasts" :key="t.id">
+      <div class="pointer-events-auto flex items-start gap-3 rounded-lg shadow-lg px-3 py-2 text-sm border backdrop-blur"
+           :class="t.kind === 'error'   ? 'bg-rose-950/80    border-rose-700/50    text-rose-100'
+                 : t.kind === 'success' ? 'bg-emerald-950/80 border-emerald-700/50 text-emerald-100'
+                 : t.kind === 'warning' ? 'bg-amber-950/80   border-amber-700/50   text-amber-100'
+                 :                        'bg-zinc-900/90    border-zinc-700/60    text-zinc-100'">
+        <span class="shrink-0"
+              x-text="t.kind === 'error' ? '✕' : t.kind === 'success' ? '✓' : t.kind === 'warning' ? '⚠' : 'ℹ'"></span>
+        <span class="flex-1 break-words" x-text="t.message"></span>
+        <button type="button" @click="toasts = toasts.filter(x => x.id !== t.id)"
+                class="text-zinc-500 hover:text-zinc-200 shrink-0" aria-label="dismiss">×</button>
+      </div>
+    </template>
+  </div>
+
   <!-- header -->
   <header class="flex items-center justify-between">
     <div class="flex items-center gap-3">
@@ -419,26 +471,57 @@
             <th class="text-left px-3 py-2">name</th>
             <th class="text-left px-3 py-2">id</th>
             <th class="text-left px-3 py-2">key</th>
-            <th class="text-left px-3 py-2">created</th>
+            <th class="text-right px-3 py-2">requests</th>
+            <th class="text-left px-3 py-2">last IP</th>
+            <th class="text-left px-3 py-2">last client</th>
             <th class="text-left px-3 py-2">last used</th>
-            <th class="px-3 py-2"></th>
+            <th class="px-3 py-2 text-right">actions</th>
           </tr>
         </thead>
         <tbody>
           <template x-for="k in apiKeys" :key="k.id">
-            <tr class="border-t border-zinc-800">
-              <td class="px-3 py-2" x-text="k.name"></td>
-              <td class="px-3 py-2 font-mono text-xs text-zinc-400" x-text="k.id"></td>
-              <td class="px-3 py-2 font-mono text-xs" x-text="k.key_preview"></td>
-              <td class="px-3 py-2 text-xs text-zinc-400" x-text="fmtTime(k.created_at)"></td>
-              <td class="px-3 py-2 text-xs text-zinc-400" x-text="fmtTime(k.last_used_at)"></td>
-              <td class="px-3 py-2 text-right">
-                <button @click="revokeKey(k)" class="text-xs text-rose-400 hover:underline">revoke</button>
-              </td>
-            </tr>
+            <template>
+              <tr class="border-t border-zinc-800 hover:bg-zinc-900/30">
+                <td class="px-3 py-2 font-medium" x-text="k.name"></td>
+                <td class="px-3 py-2 font-mono text-xs text-zinc-400" x-text="k.id"></td>
+                <td class="px-3 py-2 font-mono text-xs" x-text="k.key_preview"></td>
+                <td class="px-3 py-2 text-right font-mono text-xs"
+                    :class="(k.request_count||0) > 0 ? 'text-emerald-300' : 'text-zinc-500'"
+                    x-text="(k.request_count || 0).toLocaleString()"></td>
+                <td class="px-3 py-2 font-mono text-xs text-zinc-300" x-text="k.last_ip || '—'"></td>
+                <td class="px-3 py-2 text-xs text-zinc-300 max-w-xs truncate"
+                    :title="k.last_user_agent || ''"
+                    x-text="fmtUA(k.last_user_agent)"></td>
+                <td class="px-3 py-2 text-xs text-zinc-400" x-text="fmtTime(k.last_used_at)"></td>
+                <td class="px-3 py-2 text-right whitespace-nowrap space-x-3">
+                  <button type="button" @click="toggleKeyExpanded(k.id)"
+                          class="text-xs text-zinc-400 hover:text-zinc-200"
+                          x-text="expandedKeys.includes(k.id) ? '▾ hide' : '▸ history'"
+                          :disabled="!(k.recent_uses && k.recent_uses.length)"
+                          :class="!(k.recent_uses && k.recent_uses.length) ? 'opacity-30 cursor-not-allowed' : ''"></button>
+                  <button type="button" @click="renameKey(k)" class="text-xs text-emerald-400 hover:underline">rename</button>
+                  <button type="button" @click="revokeKey(k)" class="text-xs text-rose-400 hover:underline">revoke</button>
+                </td>
+              </tr>
+              <tr x-show="expandedKeys.includes(k.id) && k.recent_uses && k.recent_uses.length"
+                  class="border-t border-zinc-800/60 bg-zinc-950/40">
+                <td colspan="8" class="px-3 py-3">
+                  <div class="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Recent activity (last <span x-text="(k.recent_uses||[]).length"></span>)</div>
+                  <ul class="space-y-1 text-xs">
+                    <template x-for="u in (k.recent_uses || []).slice().reverse()" :key="u.ts">
+                      <li class="flex gap-3 font-mono">
+                        <span class="text-zinc-500 shrink-0 w-44" x-text="fmtTime(u.ts)"></span>
+                        <span class="text-zinc-300 shrink-0 w-32" x-text="u.ip || '—'"></span>
+                        <span class="text-zinc-400 truncate flex-1" :title="u.ua" x-text="fmtUA(u.ua)"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </td>
+              </tr>
+            </template>
           </template>
           <tr x-show="!apiKeys.length">
-            <td colspan="6" class="px-3 py-6 text-center text-zinc-500">
+            <td colspan="8" class="px-3 py-6 text-center text-zinc-500">
               No keys yet — <code>/v1</code> is open to anyone on this network.<br>
               Create one to lock it down.
             </td>
@@ -476,9 +559,32 @@
       <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-4">
         <div class="flex items-center justify-between mb-2">
           <h3 class="font-medium">OpenClaw / generic OpenAI-compatible</h3>
-          <button @click="copy(snippetGeneric())" class="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">copy</button>
+          <button type="button" @click="copy(snippetGeneric())" class="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">copy</button>
         </div>
         <pre class="text-xs bg-black/60 rounded p-3 overflow-x-auto" x-text="snippetGeneric()"></pre>
+      </div>
+
+      <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-4 md:col-span-2">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium">Postman</h3>
+          <div class="flex gap-2">
+            <button type="button" @click="copy(snippetPostman())"
+                    class="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+                    title="Copy the setup steps (URL, headers, body) shown below">copy steps</button>
+            <button type="button" @click="copy(snippetPostmanCollection())"
+                    class="text-xs px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-emerald-50"
+                    title="Copy a Postman v2.1 collection JSON — paste it into Postman → Import → Raw text">copy collection</button>
+          </div>
+        </div>
+        <pre class="text-xs bg-black/60 rounded p-3 overflow-x-auto" x-text="snippetPostman()"></pre>
+        <p class="text-[11px] text-zinc-500 mt-2 leading-relaxed">
+          <span class="text-zinc-400">Quick import:</span>
+          click <code class="text-emerald-300">copy collection</code>, open Postman →
+          <code>Import</code> → <code>Raw text</code> → paste → <code>Continue</code> →
+          <code>Import</code>. The collection lands with <code>base_url</code>, <code>model</code>,
+          and <code>api_key</code> as collection variables you can edit once and reuse across
+          requests.
+        </p>
       </div>
     </div>
   </section>
@@ -570,12 +676,28 @@
         Apply the best value automatically and restart the engine
       </label>
       <div class="flex items-center gap-3 mt-4">
-        <button @click="startAutotune()" :disabled="at.running"
+        <button type="button" @click="startAutotune()" :disabled="at.running"
                 class="px-4 py-1.5 rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-sm">
           <span x-show="!at.running">▶ Start sweep</span>
           <span x-show="at.running">running…</span>
         </button>
         <span class="text-xs text-zinc-500" x-text="at.status"></span>
+      </div>
+
+      <!-- Progress bar — visible only while a sweep is active or just finished -->
+      <div x-show="at.results.length" class="mt-4 space-y-1">
+        <div class="flex justify-between text-xs text-zinc-400 font-mono">
+          <span x-text="`step ${atDoneCount()} / ${at.results.length}`"></span>
+          <span class="space-x-3">
+            <span x-show="at.running && atEtaText()" class="text-amber-300" x-text="'ETA ' + atEtaText()"></span>
+            <span x-show="!at.running" class="text-emerald-400">complete</span>
+          </span>
+        </div>
+        <div class="h-2 bg-zinc-800 rounded overflow-hidden">
+          <div class="h-full transition-all duration-300"
+               :class="at.running ? 'bg-amber-500' : 'bg-emerald-500'"
+               :style="`width: ${atProgressPct()}%`"></div>
+        </div>
       </div>
     </div>
 
@@ -589,14 +711,20 @@
           <tbody>
             <template x-for="r in at.results" :key="r.n_cpu_moe">
               <tr class="border-t border-zinc-800"
-                  :class="at.best && at.best.n_cpu_moe === r.n_cpu_moe ? 'bg-emerald-500/10' : ''">
-                <td class="px-4 py-2 font-mono" x-text="r.n_cpu_moe"></td>
+                  :class="r.running ? 'bg-amber-500/10'
+                        : at.best && at.best.n_cpu_moe === r.n_cpu_moe ? 'bg-emerald-500/10'
+                        : ''">
+                <td class="px-4 py-2 font-mono flex items-center gap-2">
+                  <span x-show="r.running" class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                  <span x-text="r.n_cpu_moe"></span>
+                </td>
                 <td class="px-4 py-2 text-right" x-text="r.tg_tps?.toFixed(2) || '—'"></td>
                 <td class="px-4 py-2 text-right" x-text="r.pp_tps?.toFixed(2) || '—'"></td>
                 <td class="px-4 py-2 text-center">
                   <span x-show="r.ok" class="text-emerald-400">ok</span>
                   <span x-show="!r.ok && r.error" class="text-rose-400" :title="r.error">OOM/err</span>
-                  <span x-show="r.pending" class="text-zinc-500">…</span>
+                  <span x-show="r.running" class="text-amber-300">running…</span>
+                  <span x-show="r.pending && !r.running" class="text-zinc-500">queued</span>
                 </td>
               </tr>
             </template>
@@ -645,6 +773,11 @@ function llamador() {
     apiBase: '',
     _ws: null,
 
+    // themed dialog + toast system (replaces alert/confirm/prompt)
+    dialog: null,         // {kind, title, message, value?, okText, okClass, cancelText, _resolve}
+    toasts: [],           // [{id, kind, message}]
+    _toastCounter: 0,
+
     // usage
     usage: { available:false, tg_total:0, pp_total:0, tg_tps:0, pp_tps:0, kv_use:0, kv_tokens:0, requests_processing:0, spark:'' },
     _lastUsage: null,
@@ -655,6 +788,7 @@ function llamador() {
     apiKeys: [],
     newKeyName: '',
     lastNewKey: '',
+    expandedKeys: [],   // ids of keys whose recent-uses panel is open
 
     // autotune
     at: {
@@ -662,6 +796,8 @@ function llamador() {
       pp: 512, tg: 128, threads: 0, applyBest: true,
       running: false, status: '',
       results: [], best: null, log: '',
+      _stepStartedAt: null,    // ms when the current step kicked off
+      _stepDurations: [],      // completed step durations in ms (for ETA averaging)
     },
 
     async boot() {
@@ -736,7 +872,7 @@ function llamador() {
 
     async post(path) {
       const r = await fetch(this.apiBase + path, { method: 'POST' });
-      if (!r.ok) alert('failed: ' + r.status);
+      if (!r.ok) this.notify(`${path} failed (HTTP ${r.status})`, 'error');
       setTimeout(() => this.refresh(), 800);
     },
 
@@ -754,7 +890,10 @@ function llamador() {
     async pullModel() {
       const url = `${this.apiBase}/api/models/pull?repo=${encodeURIComponent(this.pullRepo)}&filename=${encodeURIComponent(this.pullFile)}`;
       const r = await fetch(url, { method: 'POST' });
-      if (!r.ok) return alert('pull failed');
+      if (!r.ok) {
+        this.notify(`Pull request rejected (HTTP ${r.status})`, 'error');
+        return;
+      }
       const { task_id } = await r.json();
       // Optimistic insert so the user sees something immediately; the poller
       // will overwrite on the next tick with the real state from the backend.
@@ -843,8 +982,14 @@ function llamador() {
     },
 
     async del(name) {
-      if (!confirm('delete ' + name + '?')) return;
-      await fetch(this.apiBase + '/api/models/' + encodeURIComponent(name), { method: 'DELETE' });
+      const ok = await this.confirmDialog(
+        `Delete ${name} from /models? This is irreversible.`,
+        { title: 'Delete model', okText: 'Delete', okClass: 'bg-rose-600 hover:bg-rose-500' },
+      );
+      if (!ok) return;
+      const r = await fetch(this.apiBase + '/api/models/' + encodeURIComponent(name), { method: 'DELETE' });
+      if (r.ok) this.notify(`Deleted ${name}`, 'success');
+      else this.notify(`Delete failed (HTTP ${r.status})`, 'error');
       this.refresh();
     },
 
@@ -962,6 +1107,33 @@ function llamador() {
       if (!t) return '—';
       return new Date(t * 1000).toLocaleString();
     },
+    fmtUA(ua) {
+      if (!ua) return '—';
+      // Heuristic: pull a short, readable label out of common UA strings so
+      // the table cell isn't dominated by a 200-char Mozilla blob. Falls
+      // back to the first 40 chars when nothing matches.
+      const s = String(ua);
+      if (/openai/i.test(s))     return 'openai-python';
+      if (/postman/i.test(s))    return 'Postman';
+      if (/insomnia/i.test(s))   return 'Insomnia';
+      if (/curl/i.test(s))       return s.match(/curl\/[\d.]+/i)?.[0] || 'curl';
+      if (/httpx/i.test(s))      return s.match(/httpx\/[\d.]+/i)?.[0] || 'httpx';
+      if (/python-requests/i.test(s)) return s.match(/python-requests\/[\d.]+/i)?.[0] || 'requests';
+      if (/aiohttp/i.test(s))    return s.match(/aiohttp\/[\d.]+/i)?.[0] || 'aiohttp';
+      if (/openwebui/i.test(s))  return 'Open WebUI';
+      if (/llamaindex/i.test(s)) return 'LlamaIndex';
+      if (/langchain/i.test(s))  return 'LangChain';
+      if (/edge\//i.test(s))     return 'Edge';
+      if (/chrome\//i.test(s) && !/edg/i.test(s)) return 'Chrome';
+      if (/firefox\//i.test(s))  return 'Firefox';
+      if (/safari\//i.test(s) && !/chrome/i.test(s)) return 'Safari';
+      return s.length > 40 ? s.slice(0, 40) + '…' : s;
+    },
+    toggleKeyExpanded(id) {
+      this.expandedKeys = this.expandedKeys.includes(id)
+        ? this.expandedKeys.filter(x => x !== id)
+        : [...this.expandedKeys, id];
+    },
 
     // -------- clients tab ----------------------------------------------
     async createKey() {
@@ -971,21 +1143,108 @@ function llamador() {
         headers: {'content-type': 'application/json'},
         body: JSON.stringify({ name }),
       });
-      if (!r.ok) { alert('create failed'); return; }
+      if (!r.ok) { this.notify(`Key creation failed (HTTP ${r.status})`, 'error'); return; }
       const rec = await r.json();
       this.lastNewKey = rec.key;
+      this.notify(`Key "${rec.name}" created — copy the secret now`, 'success');
       this.newKeyName = '';
       this.refreshClients();
       this.refresh();
     },
     async revokeKey(k) {
-      if (!confirm(`Revoke "${k.name}" (${k.id})? Existing clients will get 401.`)) return;
-      await fetch(this.apiBase + '/api/keys/' + k.id, { method: 'DELETE' });
+      const ok = await this.confirmDialog(
+        `Revoke "${k.name}" (${k.id})?\n\nExisting clients using this key will get 401 on their next request.`,
+        { title: 'Revoke key', okText: 'Revoke', okClass: 'bg-rose-600 hover:bg-rose-500' },
+      );
+      if (!ok) return;
+      const r = await fetch(this.apiBase + '/api/keys/' + k.id, { method: 'DELETE' });
+      if (r.ok) this.notify(`Revoked "${k.name}"`, 'success');
+      else this.notify(`Revoke failed (HTTP ${r.status})`, 'error');
       this.refreshClients();
       this.refresh();
     },
+
+    async renameKey(k) {
+      const name = await this.promptDialog(
+        'Friendly label — e.g. "openwebui-prod" or "alice@laptop"',
+        { title: `Rename "${k.name}"`, defaultValue: k.name, placeholder: 'name', okText: 'Rename' },
+      );
+      if (name == null || name === k.name) return;
+      const r = await fetch(this.apiBase + '/api/keys/' + k.id, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() || 'unnamed' }),
+      });
+      if (r.ok) this.notify(`Renamed to "${name.trim() || 'unnamed'}"`, 'success');
+      else this.notify(`Rename failed (HTTP ${r.status})`, 'error');
+      this.refreshClients();
+    },
     copy(s) {
-      try { navigator.clipboard.writeText(s); } catch { prompt('copy:', s); }
+      try {
+        navigator.clipboard.writeText(s);
+        this.notify('Copied to clipboard', 'success');
+      } catch {
+        this.promptDialog('Clipboard unavailable — copy manually:', { defaultValue: s, title: 'Copy' });
+      }
+    },
+
+    // ----- themed dialog helpers (return Promises so callers can await) ----
+    notify(message, kind = 'info') {
+      const id = ++this._toastCounter;
+      this.toasts.push({ id, kind, message });
+      const ttl = kind === 'error' ? 6000 : kind === 'warning' ? 5000 : 3500;
+      setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, ttl);
+    },
+    confirmDialog(message, opts = {}) {
+      return new Promise(resolve => {
+        this.dialog = {
+          kind: 'confirm',
+          title: opts.title || 'Confirm',
+          message,
+          okText: opts.okText || 'OK',
+          okClass: opts.okClass || 'bg-rose-600 hover:bg-rose-500',
+          cancelText: opts.cancelText || 'Cancel',
+          _resolve: resolve,
+        };
+      });
+    },
+    promptDialog(message, opts = {}) {
+      return new Promise(resolve => {
+        this.dialog = {
+          kind: 'prompt',
+          title: opts.title || 'Input',
+          message,
+          value: opts.defaultValue ?? '',
+          placeholder: opts.placeholder || '',
+          okText: opts.okText || 'OK',
+          okClass: opts.okClass || 'bg-emerald-600 hover:bg-emerald-500',
+          cancelText: 'Cancel',
+          _resolve: resolve,
+        };
+      });
+    },
+    alertDialog(message, opts = {}) {
+      return new Promise(resolve => {
+        this.dialog = {
+          kind: 'alert',
+          title: opts.title || 'Notice',
+          message,
+          okText: opts.okText || 'OK',
+          okClass: opts.okClass || 'bg-emerald-600 hover:bg-emerald-500',
+          _resolve: resolve,
+        };
+      });
+    },
+    _dialogOk() {
+      const d = this.dialog; if (!d) return;
+      const value = d.kind === 'prompt' ? (d.value || '') : true;
+      this.dialog = null;
+      d._resolve?.(value);
+    },
+    _dialogCancel() {
+      const d = this.dialog; if (!d) return;
+      this.dialog = null;
+      d._resolve?.(d.kind === 'prompt' ? null : false);
     },
 
     snippetOpenWebUI() {
@@ -1038,13 +1297,116 @@ function llamador() {
       ].join('\n');
     },
 
+    snippetPostman() {
+      const url = this.caps.base_url || (location.origin + '/v1');
+      const m   = this.caps.model    || 'qwen3.6-35b-a3b';
+      const needsAuth = this.caps.auth?.required || this.apiKeys.length > 0;
+      const k = this.lastNewKey || (needsAuth ? '<paste a key>' : '');
+      return [
+        '# Manual setup (or use "copy collection" to import everything at once)',
+        '',
+        'Method   : POST',
+        `URL      : ${url}/chat/completions`,
+        '',
+        'Headers:',
+        '  Content-Type    : application/json',
+        needsAuth ? `  Authorization   : Bearer ${k}` : '  (no Authorization header — /v1 is open)',
+        '',
+        'Body (raw JSON):',
+        '{',
+        `  "model": "${m}",`,
+        '  "messages": [',
+        '    {"role": "user", "content": "Hello!"}',
+        '  ],',
+        '  "stream": false',
+        '}',
+      ].join('\n');
+    },
+
+    snippetPostmanCollection() {
+      // Postman v2.1.0 collection JSON. Pasting this into Postman →
+      // Import → Raw text creates a workspace with prebuilt requests
+      // and three collection variables (base_url, model, api_key) the
+      // user can edit once and reuse.
+      const url = this.caps.base_url || (location.origin + '/v1');
+      const m   = this.caps.model    || 'qwen3.6-35b-a3b';
+      const k   = this.lastNewKey || '';
+      const reqHeaders = [{ key: 'Content-Type', value: 'application/json' }];
+      const mkBody = obj => ({
+        mode: 'raw', raw: JSON.stringify(obj, null, 2),
+        options: { raw: { language: 'json' } },
+      });
+      const collection = {
+        info: {
+          name: 'llamador (OpenAI-compatible)',
+          description: 'Generated from the llamador control panel — uses {{base_url}}, {{model}}, and {{api_key}} variables. Auth is preconfigured as Bearer with {{api_key}}; leave the variable blank if /v1 is open.',
+          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+        },
+        auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{api_key}}', type: 'string' }] },
+        variable: [
+          { key: 'base_url', value: url, type: 'string' },
+          { key: 'model',    value: m,   type: 'string' },
+          { key: 'api_key',  value: k,   type: 'string' },
+        ],
+        item: [
+          {
+            name: 'Chat completions (non-streaming)',
+            request: {
+              method: 'POST', header: reqHeaders,
+              url: { raw: '{{base_url}}/chat/completions', host: ['{{base_url}}'], path: ['chat', 'completions'] },
+              body: mkBody({ model: '{{model}}', messages: [{ role: 'user', content: 'Hello!' }], stream: false }),
+            },
+          },
+          {
+            name: 'Chat completions (streaming SSE)',
+            request: {
+              method: 'POST', header: reqHeaders,
+              url: { raw: '{{base_url}}/chat/completions', host: ['{{base_url}}'], path: ['chat', 'completions'] },
+              body: mkBody({ model: '{{model}}', messages: [{ role: 'user', content: 'Tell me a short joke.' }], stream: true }),
+            },
+          },
+          {
+            name: 'List models',
+            request: {
+              method: 'GET', header: [],
+              url: { raw: '{{base_url}}/models', host: ['{{base_url}}'], path: ['models'] },
+            },
+          },
+          {
+            name: 'Legacy completions',
+            request: {
+              method: 'POST', header: reqHeaders,
+              url: { raw: '{{base_url}}/completions', host: ['{{base_url}}'], path: ['completions'] },
+              body: mkBody({ model: '{{model}}', prompt: 'Once upon a time,', max_tokens: 64 }),
+            },
+          },
+          {
+            name: 'Control plane health (no auth)',
+            request: {
+              method: 'GET', header: [],
+              auth: { type: 'noauth' },
+              url: {
+                raw: location.origin + '/api/health',
+                protocol: location.protocol.replace(':', ''),
+                host: [location.host],
+                path: ['api', 'health'],
+              },
+            },
+          },
+        ],
+      };
+      return JSON.stringify(collection, null, 2);
+    },
+
     // -------- autotune --------------------------------------------------
     async startAutotune() {
       if (this.at.running) return;
       this.at.results = this.at.sweep.split(',').map(s => ({
-        n_cpu_moe: parseInt(s.trim(), 10), pending: true, ok: false,
+        n_cpu_moe: parseInt(s.trim(), 10), pending: true, ok: false, running: false,
       }));
       this.at.best = null; this.at.log = '';
+      this.at._stepStartedAt = null;
+      this.at._stepDurations = [];
       this.at.running = true; this.at.status = 'starting…';
 
       const params = new URLSearchParams({
@@ -1065,12 +1427,19 @@ function llamador() {
         const msg = JSON.parse(e.data);
         this.at.log += JSON.stringify(msg) + '\n';
         if (msg.type === 'step_start') {
+          // Mark previously running rows as no-longer-running (defensive)
+          this.at.results.forEach(r => { r.running = false; });
           const row = this.at.results.find(r => r.n_cpu_moe === msg.n_cpu_moe);
-          if (row) row.pending = true;
+          if (row) { row.pending = true; row.running = true; }
+          this.at._stepStartedAt = Date.now();
           this.at.status = `bench --n-cpu-moe ${msg.n_cpu_moe}`;
         } else if (msg.type === 'step_end') {
           const row = this.at.results.find(r => r.n_cpu_moe === msg.n_cpu_moe);
-          if (row) Object.assign(row, { pending:false, ok: msg.ok, tg_tps: msg.tg_tps, pp_tps: msg.pp_tps, error: msg.error });
+          if (row) Object.assign(row, { pending:false, running:false, ok: msg.ok, tg_tps: msg.tg_tps, pp_tps: msg.pp_tps, error: msg.error });
+          if (this.at._stepStartedAt) {
+            this.at._stepDurations.push(Date.now() - this.at._stepStartedAt);
+            this.at._stepStartedAt = null;
+          }
         } else if (msg.type === 'best') {
           this.at.best = { n_cpu_moe: msg.n_cpu_moe, tg_tps: msg.tg_tps };
           this.at.status = `best: ${msg.n_cpu_moe} @ ${msg.tg_tps?.toFixed(2)} t/s`;
@@ -1078,12 +1447,33 @@ function llamador() {
           this.at.status += ' (applied)'; this.refresh();
         } else if (msg.type === 'done') {
           this.at.running = false;
+          this.at.results.forEach(r => { r.running = false; });
           this.at.status = msg.error ? ('error: ' + msg.error) : (this.at.status + ' · done');
           this.refresh();
         }
       };
-      ws.onclose = () => { this.at.running = false; };
+      ws.onclose = () => { this.at.running = false; this.at.results.forEach(r => { r.running = false; }); };
       ws.onerror = () => { this.at.running = false; this.at.status = 'ws error'; };
+    },
+
+    atDoneCount() { return this.at.results.filter(r => !r.pending).length; },
+    atProgressPct() {
+      const tot = this.at.results.length || 1;
+      const done = this.atDoneCount();
+      // While a step is running, show partial credit so the bar always moves.
+      const partial = (this.at.running && this.at._stepStartedAt && this.at._stepDurations.length)
+        ? Math.min(0.95, (Date.now() - this.at._stepStartedAt) /
+                         (this.at._stepDurations.reduce((a,b) => a+b, 0) / this.at._stepDurations.length))
+        : 0;
+      return Math.min(100, ((done + partial) / tot) * 100);
+    },
+    atEtaText() {
+      if (!this.at.running) return '';
+      const remaining = this.at.results.length - this.atDoneCount();
+      if (remaining <= 0 || !this.at._stepDurations.length) return '';
+      const avg = this.at._stepDurations.reduce((a,b) => a+b, 0) / this.at._stepDurations.length;
+      const seconds = (remaining * avg) / 1000;
+      return this.fmtDuration(seconds);
     },
   };
 }

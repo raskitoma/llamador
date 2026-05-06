@@ -44,6 +44,7 @@ log = logging.getLogger(__name__)
 
 KEY_PREFIX = "sk-"
 KEY_LEN = 32      # alphanum after the prefix
+MAX_RECENT_USES = 10   # ring buffer length for per-key activity
 
 
 def _new_key() -> str:
@@ -104,6 +105,10 @@ class KeyStore:
                 "key": _new_key(),
                 "created_at": time.time(),
                 "last_used_at": None,
+                "last_ip": None,
+                "last_user_agent": None,
+                "request_count": 0,
+                "recent_uses": [],   # ring buffer of last MAX_RECENT_USES uses
                 "enabled": True,
             }
             data["keys"].append(rec)
@@ -132,14 +137,31 @@ class KeyStore:
                     return True
         return False
 
+    def rename(self, kid: str, name: str) -> bool:
+        with self._lock:
+            data = self._read()
+            for k in data["keys"]:
+                if k.get("id") == kid:
+                    k["name"] = (name or "unnamed").strip() or "unnamed"
+                    self._write(data)
+                    return True
+        return False
+
     def has_keys(self) -> bool:
         return any(k.get("enabled") for k in self._read()["keys"])
 
-    def verify(self, presented: str | None) -> dict | None:
+    def verify(
+        self,
+        presented: str | None,
+        client_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict | None:
         """Return the record if the presented key matches an enabled one.
 
         `presented` may be the raw key (e.g. from `Authorization: Bearer …`)
-        or None (returns None). On match, last_used_at is updated.
+        or None (returns None). On match, last_used_at, last_ip,
+        last_user_agent, request_count, and the recent_uses ring buffer
+        are all updated.
         """
         if not presented:
             return None
@@ -147,7 +169,22 @@ class KeyStore:
             data = self._read()
             for k in data["keys"]:
                 if k.get("enabled") and secrets.compare_digest(k.get("key", ""), presented):
-                    k["last_used_at"] = time.time()
+                    now = time.time()
+                    k["last_used_at"] = now
+                    if client_ip:
+                        k["last_ip"] = client_ip
+                    if user_agent:
+                        # User-Agent strings can be quite long; cap to keep keys.json small.
+                        k["last_user_agent"] = user_agent[:256]
+                    k["request_count"] = int(k.get("request_count", 0)) + 1
+                    ring = k.setdefault("recent_uses", [])
+                    ring.append({
+                        "ts": now,
+                        "ip": client_ip or "?",
+                        "ua": (user_agent or "")[:256],
+                    })
+                    if len(ring) > MAX_RECENT_USES:
+                        del ring[: len(ring) - MAX_RECENT_USES]
                     self._write(data)
                     return k
         return None

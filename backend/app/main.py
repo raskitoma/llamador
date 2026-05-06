@@ -74,14 +74,37 @@ def auth(authorization: str | None = Header(default=None)) -> None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or missing token")
 
 
-def auth_inference(authorization: str | None) -> dict | None:
-    """Inference gate. Open if no keys exist; require Bearer match otherwise."""
+def _client_ip(request: Request) -> str | None:
+    """Best-effort real IP. Behind Caddy we get X-Forwarded-For (first hop is
+    the original client); fall back to the connection peer when header is
+    missing (e.g. direct LAN call to the backend on the docker network)."""
+    fwd = request.headers.get("x-forwarded-for", "").strip()
+    if fwd:
+        return fwd.split(",")[0].strip()
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip()
+    return request.client.host if request.client else None
+
+
+def auth_inference(request: Request) -> dict | None:
+    """Inference gate. Open if no keys exist; require Bearer match otherwise.
+
+    On match, the matching key record is updated with the requester's IP,
+    User-Agent, and a per-request counter so the UI can show who's been
+    using each key.
+    """
     if not keys.has_keys():
         return None
+    authorization = request.headers.get("authorization")
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
     presented = authorization.split(" ", 1)[1].strip()
-    rec = keys.verify(presented)
+    rec = keys.verify(
+        presented,
+        client_ip=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
     if not rec:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid api key")
     return rec
@@ -259,10 +282,25 @@ def revoke_key(kid: str) -> dict:
     if not keys.revoke(kid): raise HTTPException(404, "no such key")
     return {"revoked": kid}
 
+class KeyPatch(BaseModel):
+    enabled: bool | None = None
+    name: str | None = None
+
 @app.patch("/api/keys/{kid}", dependencies=[Depends(auth)])
-def toggle_key(kid: str, enabled: bool) -> dict:
-    if not keys.set_enabled(kid, enabled): raise HTTPException(404, "no such key")
-    return {"id": kid, "enabled": enabled}
+def patch_key(kid: str, body: KeyPatch) -> dict:
+    """Update enabled state and/or name on a key. At least one field required."""
+    if body.enabled is None and body.name is None:
+        raise HTTPException(400, "provide at least one of: enabled, name")
+    out: dict = {"id": kid}
+    if body.enabled is not None:
+        if not keys.set_enabled(kid, body.enabled):
+            raise HTTPException(404, "no such key")
+        out["enabled"] = body.enabled
+    if body.name is not None:
+        if not keys.rename(kid, body.name):
+            raise HTTPException(404, "no such key")
+        out["name"] = body.name
+    return out
 
 
 # ============================ /api/capabilities ============================
@@ -367,7 +405,7 @@ async def get_usage() -> dict:
 @app.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def openai_passthrough(path: str, request: Request) -> Response:
     """OpenAI-compatible proxy with key-store auth."""
-    auth_inference(request.headers.get("authorization"))
+    auth_inference(request)
     url = f"{settings.engine_url}/{path}"
     body = await request.body()
     headers = {k: v for k, v in request.headers.items()
