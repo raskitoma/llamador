@@ -87,6 +87,78 @@
     </div>
   </header>
 
+  <!-- ============== Global system + token-rate strip (always visible) =======
+       Stays mounted on every tab so GPU/CPU/memory/decode-rate context never
+       gets lost — autotune, logs, models, etc. all benefit. -->
+  <div x-show="gpu.available || system.available || usage.available"
+       class="rounded-lg bg-zinc-900/60 border border-zinc-800 px-3 py-2 space-y-1.5">
+    <!-- Row 1: GPU per-device -->
+    <div class="flex items-center gap-4 text-xs flex-wrap">
+      <template x-for="g in gpu.gpus || []" :key="g.index">
+        <div class="flex items-center gap-3 min-w-0">
+          <span class="text-zinc-500 shrink-0" x-text="`#${g.index}`"></span>
+          <span class="text-zinc-300 font-mono truncate" :title="g.name" x-text="g.name"></span>
+          <div class="flex items-center gap-1.5">
+            <span class="text-zinc-500">VRAM</span>
+            <div class="w-24 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div class="h-full transition-all"
+                   :class="(g['memory.percent']??0) > 90 ? 'bg-rose-500' : (g['memory.percent']??0) > 75 ? 'bg-amber-500' : 'bg-emerald-500'"
+                   :style="`width:${g['memory.percent']??0}%`"></div>
+            </div>
+            <span class="font-mono text-zinc-300 tabular-nums w-24 shrink-0"
+                  x-text="`${(((g['memory.used']??0)/1024)).toFixed(1)} / ${((g['memory.total']??0)/1024).toFixed(1)} GiB`"></span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span class="text-zinc-500">gpu</span>
+            <div class="w-16 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div class="h-full bg-sky-500 transition-all"
+                   :style="`width:${g['utilization.gpu']??0}%`"></div>
+            </div>
+            <span class="font-mono text-zinc-300 tabular-nums w-10 shrink-0"
+                  x-text="`${g['utilization.gpu']??0}%`"></span>
+          </div>
+          <span class="text-zinc-400 font-mono tabular-nums"
+                x-text="`${g['temperature.gpu']??'—'}°C`"></span>
+          <span class="text-zinc-400 font-mono tabular-nums"
+                x-text="`${(g['power.draw']??0).toFixed(0)}W`"></span>
+        </div>
+      </template>
+      <!-- decode rate sits at the right of the GPU row -->
+      <div x-show="usage.available" class="flex items-center gap-1.5 ml-auto">
+        <span class="text-zinc-500">decode</span>
+        <span class="font-mono"
+              :class="(usage.requests_processing||0) > 0 ? 'text-amber-300' : 'text-zinc-400'"
+              x-text="`${(usage.tg_tps || usage.tg_tps_avg || 0).toFixed(1)} t/s`"></span>
+        <span x-show="(usage.requests_processing||0) > 0"
+              class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+      </div>
+    </div>
+    <!-- Row 2: Host CPU + RAM (always shown when /api/system is reachable) -->
+    <div x-show="system.available" class="flex items-center gap-4 text-xs flex-wrap">
+      <div class="flex items-center gap-1.5">
+        <span class="text-zinc-500">CPU</span>
+        <div class="w-24 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+          <div class="h-full transition-all"
+               :class="(system.cpu_percent||0) > 90 ? 'bg-rose-500' : (system.cpu_percent||0) > 70 ? 'bg-amber-500' : 'bg-cyan-500'"
+               :style="`width:${system.cpu_percent||0}%`"></div>
+        </div>
+        <span class="font-mono text-zinc-300 tabular-nums w-12 shrink-0"
+              x-text="`${(system.cpu_percent||0).toFixed(0)}%`"></span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-zinc-500">RAM</span>
+        <div class="w-32 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+          <div class="h-full transition-all"
+               :class="(system.mem_percent||0) > 90 ? 'bg-rose-500' : (system.mem_percent||0) > 75 ? 'bg-amber-500' : 'bg-violet-500'"
+               :style="`width:${system.mem_percent||0}%`"></div>
+        </div>
+        <span class="font-mono text-zinc-300 tabular-nums w-32 shrink-0"
+              x-text="`${(system.mem_used_bytes/1073741824).toFixed(1)} / ${(system.mem_total_bytes/1073741824).toFixed(1)} GiB`"></span>
+        <span class="text-zinc-500 tabular-nums" x-text="`(${(system.mem_percent||0).toFixed(0)}%)`"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- tabs -->
   <nav class="flex gap-1 border-b border-zinc-800 overflow-x-auto">
     <template x-for="t in tabs" :key="t">
@@ -624,6 +696,7 @@
     <div class="flex flex-wrap gap-2 items-center">
       <button type="button" @click="logsPaused = !logsPaused"
               :class="logsPaused ? 'bg-amber-600' : 'bg-zinc-800'"
+              :aria-label="logsPaused ? 'resume log stream' : 'pause log stream'"
               class="px-3 py-1.5 rounded text-sm" x-text="logsPaused ? '▶ resume' : '⏸ pause'"></button>
       <button type="button" @click="logs = []; logCategories = []; selectedLogCategories = null"
               class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">🗑 clear view</button>
@@ -792,6 +865,8 @@
               <th class="text-left px-3 py-2">n-cpu-moe</th>
               <th class="text-right px-3 py-2">tg t/s</th>
               <th class="text-right px-3 py-2">pp t/s</th>
+              <th class="text-right px-3 py-2" title="Peak host RAM consumed by the bench container">RAM</th>
+              <th class="text-right px-3 py-2" title="Peak GPU VRAM during the bench step">VRAM</th>
               <th class="text-center px-3 py-2">status</th>
             </tr>
           </thead>
@@ -810,6 +885,10 @@
                 </td>
                 <td class="px-3 py-2 text-right font-mono" x-text="r.tg_tps?.toFixed(2) || '—'"></td>
                 <td class="px-3 py-2 text-right font-mono text-zinc-400" x-text="r.pp_tps?.toFixed(2) || '—'"></td>
+                <td class="px-3 py-2 text-right font-mono text-violet-300 text-xs"
+                    x-text="r.peak_cpu_mem_bytes ? (r.peak_cpu_mem_bytes/1073741824).toFixed(2) + ' GiB' : '—'"></td>
+                <td class="px-3 py-2 text-right font-mono text-sky-300 text-xs"
+                    x-text="r.peak_vram_mb ? (r.peak_vram_mb >= 1024 ? (r.peak_vram_mb/1024).toFixed(2) + ' GiB' : r.peak_vram_mb + ' MiB') : '—'"></td>
                 <td class="px-3 py-2 text-center">
                   <span x-show="r.ok" class="text-emerald-400">ok</span>
                   <span x-show="!r.ok && r.error && !r.running" class="text-rose-400" :title="r.error">OOM/err</span>
@@ -818,7 +897,7 @@
                 </td>
               </tr>
             </template>
-            <tr x-show="!at.results.length"><td colspan="5" class="px-4 py-6 text-center text-zinc-500">no results yet</td></tr>
+            <tr x-show="!at.results.length"><td colspan="7" class="px-4 py-6 text-center text-zinc-500">no results yet</td></tr>
           </tbody>
         </table>
       </div>
@@ -862,6 +941,7 @@ function llamador() {
     tab: 'status',
     status: {},
     gpu: { available: false, gpus: [] },
+    system: { available: false, cpu_percent: 0, mem_used_bytes: 0, mem_total_bytes: 0, mem_percent: 0 },
     cfg: {},
     models: [],
     saveMsg: '',
@@ -934,12 +1014,18 @@ function llamador() {
     async boot() {
       await this.refresh();
       await this.refreshGPU();
+      await this.refreshSystem();
       await this.refreshUsage();
       await this.refreshClients();
       this.connectLogs();
       setInterval(() => this.refresh(), 5000);
       setInterval(() => this.refreshGPU(), 2000);
+      setInterval(() => this.refreshSystem(), 2000);
       setInterval(() => this.refreshUsage(), 1000);
+    },
+
+    async refreshSystem() {
+      try { this.system = await fetch(this.apiBase + '/api/system').then(r => r.json()); } catch {}
     },
 
     async refresh() {
@@ -1592,7 +1678,13 @@ function llamador() {
           this.at.status = `bench kv=${msg.kv_type || '?'} n_cpu_moe=${msg.n_cpu_moe}`;
         } else if (msg.type === 'step_end') {
           const row = this._atFindRow(msg.n_cpu_moe, msg.kv_type);
-          if (row) Object.assign(row, { pending:false, running:false, ok: msg.ok, tg_tps: msg.tg_tps, pp_tps: msg.pp_tps, error: msg.error });
+          if (row) Object.assign(row, {
+            pending: false, running: false,
+            ok: msg.ok, tg_tps: msg.tg_tps, pp_tps: msg.pp_tps,
+            peak_cpu_mem_bytes: msg.peak_cpu_mem_bytes || 0,
+            peak_vram_mb:       msg.peak_vram_mb       || 0,
+            error: msg.error,
+          });
           if (this.at._stepStartedAt) {
             this.at._stepDurations.push(Date.now() - this.at._stepStartedAt);
             this.at._stepStartedAt = null;

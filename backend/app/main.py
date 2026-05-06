@@ -43,6 +43,7 @@ from .docker_manager import DockerManager, EngineNotFound
 from .gpu_monitor import GPUMonitor
 from .key_store import KeyStore
 from .model_manager import ModelManager
+from .system_monitor import SystemMonitor
 
 log = logging.getLogger("llamador")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -61,7 +62,8 @@ settings = get_settings()
 docker_mgr = DockerManager()
 model_mgr = ModelManager()
 gpu_monitor = GPUMonitor(docker_mgr)
-autotune = AutotuneRunner(docker_mgr)
+system_monitor = SystemMonitor()
+autotune = AutotuneRunner(docker_mgr, gpu_monitor)
 keys = KeyStore()
 
 
@@ -226,6 +228,13 @@ async def rebuild_engine() -> dict:
 # --------------------------------------------------------------- /api/gpu
 @app.get("/api/gpu", dependencies=[Depends(auth)])
 def get_gpu() -> dict: return gpu_monitor.stats()
+
+
+@app.get("/api/system", dependencies=[Depends(auth)])
+def get_system() -> dict:
+    """Host-level CPU% and memory. Reads /proc directly — works from inside
+    the backend container because Docker doesn't isolate /proc by default."""
+    return system_monitor.read()
 
 
 # ------------------------------------------------------------- autotune

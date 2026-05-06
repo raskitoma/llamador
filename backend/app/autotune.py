@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -30,6 +31,8 @@ import docker
 
 from .config import RuntimeConfig, get_settings, load_config, save_config
 from .docker_manager import DockerManager
+from .gpu_monitor import GPUMonitor
+from .system_monitor import sample_container_peak_memory
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +51,8 @@ class SweepStep:
     kv_type: str = "q8_0"
     tg_tps: float | None = None
     pp_tps: float | None = None
+    peak_cpu_mem_bytes: int = 0   # peak RSS of the bench container during the step
+    peak_vram_mb: int = 0         # peak VRAM seen on the GPU during the step
     ok: bool = False
     raw: str = ""
     error: str | None = None
@@ -75,8 +80,9 @@ class AutotuneState:
 
 
 class AutotuneRunner:
-    def __init__(self, dm: DockerManager) -> None:
+    def __init__(self, dm: DockerManager, gm: GPUMonitor | None = None) -> None:
         self.dm = dm
+        self.gm = gm
         self.client = docker.from_env()
         self.settings = get_settings()
         self._tasks: dict[str, AutotuneState] = {}
@@ -229,6 +235,10 @@ class AutotuneRunner:
                     step.ok = False
                 finally:
                     st.current_container_id = None
+                # _bench_once stashes the latest peaks on the state; copy
+                # them onto the step record so list_tasks/UI can read them.
+                step.peak_cpu_mem_bytes = getattr(st, "_last_peak_cpu_mem_bytes", 0) or 0
+                step.peak_vram_mb       = getattr(st, "_last_peak_vram_mb", 0) or 0
                 await emit(
                     "step_end",
                     n_cpu_moe=n,
@@ -236,6 +246,8 @@ class AutotuneRunner:
                     ok=step.ok,
                     pp_tps=step.pp_tps,
                     tg_tps=step.tg_tps,
+                    peak_cpu_mem_bytes=step.peak_cpu_mem_bytes,
+                    peak_vram_mb=step.peak_vram_mb,
                     error=step.error,
                 )
 
@@ -339,6 +351,13 @@ class AutotuneRunner:
         container = None
         output_chunks: list[str] = []
         line_buf = ""
+        # Sidecar sampler tracks peak memory + VRAM during the bench. Created
+        # only after the container starts so it can read .stats() against a
+        # known id; cleaned up in `finally`.
+        sampler_thread: threading.Thread | None = None
+        sampler_stop = threading.Event()
+        peak_mem_holder = {"value": 0}
+        peak_vram_holder = {"value": 0}
         try:
             container = self.client.containers.run(
                 image=image,
@@ -353,6 +372,32 @@ class AutotuneRunner:
             )
             st.current_container_id = container.id
 
+            def _run_sampler():
+                # Memory: docker stats on the bench container.
+                # VRAM: pull from gpu_monitor.stats() (reads engine-exec or
+                # ephemeral nvidia-smi) — sampled at the same 1Hz cadence.
+                while not sampler_stop.is_set():
+                    try:
+                        stats = container.stats(stream=False)
+                        mem = stats.get("memory_stats", {}).get("usage")
+                        if isinstance(mem, int) and mem > peak_mem_holder["value"]:
+                            peak_mem_holder["value"] = mem
+                    except Exception:
+                        pass
+                    try:
+                        if self.gm is not None:
+                            g = self.gm.stats()
+                            for d in (g.get("gpus") or []):
+                                used = d.get("memory.used")
+                                if isinstance(used, (int, float)) and used > peak_vram_holder["value"]:
+                                    peak_vram_holder["value"] = int(used)
+                    except Exception:
+                        pass
+                    sampler_stop.wait(1.0)
+
+            sampler_thread = threading.Thread(target=_run_sampler, daemon=True, name="autotune-sampler")
+            sampler_thread.start()
+
             # Stream stdout+stderr while the bench runs.
             for raw in container.logs(stream=True, follow=True, stdout=True, stderr=True):
                 chunk = raw.decode(errors="replace") if isinstance(raw, bytes) else str(raw)
@@ -363,12 +408,9 @@ class AutotuneRunner:
                         line, line_buf = line_buf.split("\n", 1)
                         if line:
                             on_line(line)
-            # Flush any tail without trailing newline
             if on_line and line_buf.strip():
                 on_line(line_buf)
 
-            # Drain the exit code; logs() unblocks once the container exits
-            # but wait() is what guarantees the inspect is up to date.
             result = container.wait()
             text = "".join(output_chunks)
             if result.get("StatusCode", 0) != 0 and not text.strip():
@@ -377,6 +419,14 @@ class AutotuneRunner:
                 on_line(f"[bench] exit {result.get('StatusCode', '?')}")
             return text
         finally:
+            sampler_stop.set()
+            if sampler_thread is not None:
+                sampler_thread.join(timeout=3)
+            # Stash the peaks on the AutotuneState so the runner can copy
+            # them onto the SweepStep — _bench_once otherwise just returns
+            # the text.
+            st._last_peak_cpu_mem_bytes = peak_mem_holder["value"]
+            st._last_peak_vram_mb = peak_vram_holder["value"]
             if container is not None:
                 try:
                     container.remove(force=True)
