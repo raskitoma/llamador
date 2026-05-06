@@ -276,6 +276,14 @@
               </div>
             </div>
           </template>
+          <p x-show="(cfg.n_cpu_moe ?? 0) >= 16 && gpu.available"
+             class="text-[10px] text-zinc-500 mt-2 leading-relaxed">
+            VRAM looks low? Yes — with
+            <code class="text-zinc-300">--n-cpu-moe&nbsp;<span x-text="cfg.n_cpu_moe"></span></code>
+            the MoE expert weights live in CPU RAM, not VRAM. Lower
+            <code class="text-zinc-300">n-cpu-moe</code> to push more layers onto
+            the GPU (Auto-tune tab can find the highest value that still fits).
+          </p>
         </div>
 
         <!-- Token usage tile (NEW) -->
@@ -288,12 +296,20 @@
           </div>
           <div class="grid grid-cols-2 gap-3 text-sm">
             <div class="bg-zinc-950/60 rounded p-3">
-              <div class="text-xs text-zinc-400">Decode rate</div>
-              <div class="text-xl font-mono" x-text="(usage.tg_tps||0).toFixed(1) + ' t/s'"></div>
+              <div class="text-xs text-zinc-400 flex justify-between">
+                <span>Decode rate</span>
+                <span x-show="usage.tg_tps_avg > 0" class="text-zinc-500"
+                      x-text="`avg ${(usage.tg_tps_avg||0).toFixed(2)}`"></span>
+              </div>
+              <div class="text-xl font-mono" x-text="(usage.tg_tps||usage.tg_tps_avg||0).toFixed(1) + ' t/s'"></div>
             </div>
             <div class="bg-zinc-950/60 rounded p-3">
-              <div class="text-xs text-zinc-400">Prompt rate</div>
-              <div class="text-xl font-mono" x-text="(usage.pp_tps||0).toFixed(1) + ' t/s'"></div>
+              <div class="text-xs text-zinc-400 flex justify-between">
+                <span>Prompt rate</span>
+                <span x-show="usage.pp_tps_avg > 0" class="text-zinc-500"
+                      x-text="`avg ${(usage.pp_tps_avg||0).toFixed(2)}`"></span>
+              </div>
+              <div class="text-xl font-mono" x-text="(usage.pp_tps||usage.pp_tps_avg||0).toFixed(1) + ' t/s'"></div>
             </div>
             <div class="bg-zinc-950/60 rounded p-3">
               <div class="text-xs text-zinc-400">Generated total</div>
@@ -306,11 +322,20 @@
             <div class="bg-zinc-950/60 rounded p-3 col-span-2">
               <div class="flex justify-between text-xs text-zinc-400 mb-1">
                 <span>KV cache use</span>
-                <span x-text="`${((usage.kv_use||0)*100).toFixed(1)}% · ${fmtCount(usage.kv_tokens)} tok`"></span>
+                <span x-show="usage.kv_tokens || usage.kv_use"
+                      x-text="`${((usage.kv_use||0)*100).toFixed(1)}% · ${fmtCount(usage.kv_tokens)} tok`"></span>
+                <span x-show="!usage.kv_tokens && !usage.kv_use" class="text-zinc-600"
+                      title="The TurboQuant build of llama-server doesn't expose llamacpp:kv_cache_* metrics. The KV buffer is allocated at boot — see Logs for the size."
+                      >metrics not exposed</span>
               </div>
               <div class="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
                 <div class="h-full bg-fuchsia-500 transition-all" :style="`width:${(usage.kv_use||0)*100}%`"></div>
               </div>
+            </div>
+            <div class="bg-zinc-950/60 rounded p-3 col-span-2 text-xs text-zinc-500"
+                 x-show="usage.requests_processing > 0">
+              <span class="text-amber-300">●</span>
+              <span x-text="`${usage.requests_processing} request${usage.requests_processing > 1 ? 's' : ''} in flight · ${(usage.busy_slots||0).toFixed(1)} busy slot${(usage.busy_slots||0) > 1 ? 's' : ''}/decode`"></span>
             </div>
           </div>
           <!-- inline sparkline of last 60 samples -->
@@ -794,7 +819,14 @@ function llamador() {
     _toastCounter: 0,
 
     // usage
-    usage: { available:false, tg_total:0, pp_total:0, tg_tps:0, pp_tps:0, kv_use:0, kv_tokens:0, requests_processing:0, spark:'' },
+    usage: {
+      available: false, tg_total: 0, pp_total: 0,
+      tg_tps: 0,        pp_tps: 0,         // instantaneous (delta-derived)
+      tg_tps_avg: 0,    pp_tps_avg: 0,     // engine-side running averages
+      busy_slots: 0,
+      kv_use: 0, kv_tokens: 0,
+      requests_processing: 0, spark: '',
+    },
     _lastUsage: null,
     _sparkBuf: [],
 
@@ -868,6 +900,9 @@ function llamador() {
           tg_total: c.tokens_predicted_total,
           pp_total: c.prompt_tokens_total,
           tg_tps, pp_tps,
+          tg_tps_avg: c.predict_tps_avg || 0,
+          pp_tps_avg: c.prompt_tps_avg  || 0,
+          busy_slots: c.busy_slots_per_decode || 0,
           kv_use:    c.kv_cache_usage,
           kv_tokens: c.kv_cache_tokens,
           requests_processing: c.requests_processing,

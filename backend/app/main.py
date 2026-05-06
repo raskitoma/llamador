@@ -359,13 +359,20 @@ async def metrics_passthrough() -> Response:
 
 # ----------------------------------------------------------- /api/usage
 _USAGE_KEYS = {
+    # cumulative counters — frontend deltas these for instantaneous rates
     "llamacpp:prompt_tokens_total":            "prompt_tokens_total",
     "llamacpp:tokens_predicted_total":         "tokens_predicted_total",
     "llamacpp:tokens_predicted_seconds_total": "predict_seconds_total",
     "llamacpp:prompt_seconds_total":           "prompt_seconds_total",
     "llamacpp:n_decode_total":                 "n_decode_total",
+    # gauges — engine-side running averages, useful even between requests
+    "llamacpp:prompt_tokens_seconds":          "prompt_tps_avg",
+    "llamacpp:predicted_tokens_seconds":       "predict_tps_avg",
+    "llamacpp:n_busy_slots_per_decode":        "busy_slots_per_decode",
+    # KV cache (only emitted by some llama-server builds; will read 0 if absent)
     "llamacpp:kv_cache_tokens":                "kv_cache_tokens",
     "llamacpp:kv_cache_usage_ratio":           "kv_cache_usage",
+    # request lifecycle
     "llamacpp:requests_processing":            "requests_processing",
     "llamacpp:requests_deferred":              "requests_deferred",
 }
