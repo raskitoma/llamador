@@ -13,7 +13,8 @@ from concurrent.futures import Future
 from pathlib import Path
 from threading import Lock
 
-from huggingface_hub import hf_hub_download
+import httpx
+from huggingface_hub import hf_hub_download, hf_hub_url
 from huggingface_hub.utils import HfHubHTTPError
 
 from .config import get_settings
@@ -53,6 +54,25 @@ class ModelManager:
         target.unlink()
 
     # ---------------------------------------------------------------- pull
+    def _probe_total_bytes(self, repo: str, filename: str) -> int | None:
+        """Best-effort HEAD against HF so the UI can show xGB/yGB and a percent.
+
+        Returns None on any failure — the download still runs, the UI just
+        falls back to the byte counter without a denominator.
+        """
+        try:
+            url = hf_hub_url(repo_id=repo, filename=filename)
+            headers = {}
+            if self.settings.hf_token:
+                headers["Authorization"] = f"Bearer {self.settings.hf_token}"
+            with httpx.Client(follow_redirects=True, timeout=10.0) as c:
+                r = c.head(url, headers=headers)
+                r.raise_for_status()
+                cl = r.headers.get("content-length")
+                return int(cl) if cl else None
+        except Exception:  # noqa: BLE001
+            return None
+
     def start_pull(self, repo: str, filename: str) -> str:
         """Kick off an HF download in a background thread, return a task id."""
         task_id = f"pull-{abs(hash((repo, filename)))}"
@@ -65,7 +85,14 @@ class ModelManager:
                 "file": filename,
                 "progress": None,
                 "error": None,
+                "total_bytes": None,  # populated below; may stay None on probe failure
             }
+
+        # Probe the file size synchronously — single HEAD request, ~100ms.
+        # Done outside the lock since we don't want to block other task ops.
+        total = self._probe_total_bytes(repo, filename)
+        with self._lock:
+            self._tasks[task_id]["total_bytes"] = total
 
         # Make HF transfer fast where possible.
         os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"

@@ -233,21 +233,37 @@
       <div class="px-4 py-2 bg-zinc-900 text-zinc-400 text-xs uppercase tracking-wider">downloads</div>
       <ul class="divide-y divide-zinc-800">
         <template x-for="t in pullTasks" :key="t.id">
-          <li class="px-4 py-2 flex items-center gap-3 text-sm">
-            <span class="w-2 h-2 rounded-full"
-                  :class="t.state === 'running' ? 'bg-amber-400 animate-pulse'
-                                                : t.state === 'done'    ? 'bg-emerald-400'
-                                                                        : 'bg-rose-400'"></span>
-            <span class="font-mono text-xs flex-1 truncate" x-text="t.file"></span>
-            <span class="text-xs text-zinc-400" x-text="fmtBytes(t.bytes_downloaded || 0)"></span>
-            <span class="text-xs"
-                  :class="t.state === 'running' ? 'text-amber-300'
-                                                : t.state === 'done'    ? 'text-emerald-300'
-                                                                        : 'text-rose-300'"
-                  x-text="t.state === 'running' ? 'downloading…' : t.state"></span>
-            <span x-show="t.error" class="text-xs text-rose-400 truncate max-w-xs" x-text="t.error"></span>
-            <button x-show="t.state !== 'running'" @click="dismissPullTask(t.id)"
-                    class="text-xs text-zinc-500 hover:text-zinc-300">✕</button>
+          <li class="px-4 py-3 space-y-2">
+            <div class="flex items-center gap-3 text-sm">
+              <span class="w-2 h-2 rounded-full shrink-0"
+                    :class="t.state === 'running' ? 'bg-amber-400 animate-pulse'
+                                                  : t.state === 'done'    ? 'bg-emerald-400'
+                                                                          : 'bg-rose-400'"></span>
+              <span class="font-mono text-xs flex-1 truncate" x-text="t.file"></span>
+              <span class="text-xs"
+                    :class="t.state === 'running' ? 'text-amber-300'
+                                                  : t.state === 'done'    ? 'text-emerald-300'
+                                                                          : 'text-rose-300'"
+                    x-text="t.state === 'running' ? 'downloading…' : t.state"></span>
+              <button type="button" x-show="t.state !== 'running'" @click="dismissPullTask(t.id)"
+                      aria-label="Dismiss"
+                      class="text-xs text-zinc-500 hover:text-zinc-300 shrink-0">✕</button>
+            </div>
+            <!-- Progress bar -->
+            <div class="space-y-1">
+              <div class="h-1.5 bg-zinc-800 rounded overflow-hidden">
+                <div class="h-full transition-all duration-300"
+                     :class="t.state === 'done' ? 'bg-emerald-500'
+                            : t.state === 'error' ? 'bg-rose-500'
+                                                  : 'bg-amber-500'"
+                     :style="`width: ${pullPct(t)}%`"></div>
+              </div>
+              <div class="flex justify-between text-xs text-zinc-400 font-mono">
+                <span x-text="pullProgressText(t)"></span>
+                <span x-show="t.total_bytes" x-text="pullPct(t).toFixed(1) + '%'"></span>
+              </div>
+            </div>
+            <div x-show="t.error" class="text-xs text-rose-400 break-words" x-text="t.error"></div>
           </li>
         </template>
       </ul>
@@ -650,6 +666,18 @@ function llamador() {
 
     dismissPullTask(id) {
       this.pullTasks = this.pullTasks.filter(t => t.id !== id);
+    },
+
+    pullPct(t) {
+      if (t.state === 'done') return 100;
+      if (!t.total_bytes) return 0;
+      return Math.min(100, Math.max(0, (t.bytes_downloaded / t.total_bytes) * 100));
+    },
+
+    pullProgressText(t) {
+      const cur = this.fmtBytes(t.bytes_downloaded || 0);
+      if (t.total_bytes) return `${cur} / ${this.fmtBytes(t.total_bytes)}`;
+      return cur;
     },
 
     async del(name) {
