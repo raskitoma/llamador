@@ -230,15 +230,25 @@ def get_gpu() -> dict: return gpu_monitor.stats()
 
 # ------------------------------------------------------------- autotune
 @app.post("/api/autotune", dependencies=[Depends(auth)])
-async def start_autotune(sweep: str = "48,40,36,32,28,24,20", pp: int = 512,
-                         tg: int = 128, threads: int = 0, apply_best: bool = True) -> dict:
+async def start_autotune(
+    sweep: str = "48,40,36,32,28,24,20",
+    kv_types: str = "",
+    pp: int = 512,
+    tg: int = 128,
+    threads: int = 0,
+    apply_best: bool = True,
+) -> dict:
     try:
         sweep_list = [int(x.strip()) for x in sweep.split(",") if x.strip()]
     except ValueError as e:
         raise HTTPException(400, f"bad sweep value: {e}") from e
     if not sweep_list: raise HTTPException(400, "sweep must have at least one value")
-    return {"task_id": autotune.start(sweep=sweep_list, pp=pp, tg=tg,
-                                       threads=threads, apply_best=apply_best)}
+    # Empty kv_types → bench against the running config's kv_type (1-D sweep,
+    # backward-compatible). Non-empty → 2-D sweep over (n_cpu_moe, kv_type).
+    kv_list = [k.strip() for k in kv_types.split(",") if k.strip()]
+    return {"task_id": autotune.start(sweep=sweep_list, kv_types=kv_list,
+                                       pp=pp, tg=tg, threads=threads,
+                                       apply_best=apply_best)}
 
 @app.get("/api/autotune/{task_id}", dependencies=[Depends(auth)])
 def get_autotune(task_id: str) -> dict:

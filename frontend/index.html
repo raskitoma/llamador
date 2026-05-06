@@ -677,15 +677,22 @@
   <!-- ============================== AUTOTUNE ================================ -->
   <section x-show="tab === 'autotune'" class="space-y-4">
     <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
-      <h2 class="font-medium mb-3">Auto-tune <code>--n-cpu-moe</code></h2>
+      <h2 class="font-medium mb-3">Auto-tune <code>--n-cpu-moe</code> &times; KV cache type</h2>
       <p class="text-xs text-zinc-400 mb-3">
-        Sweeps values via <code>llama-bench</code>, picks the fastest non-OOM result (with a 3% bias toward higher
-        <code>--n-cpu-moe</code> for VRAM headroom), and applies it. The engine is stopped during the sweep.
+        Sweeps every (<code>n_cpu_moe</code> × <code>kv_type</code>) combination via
+        <code>llama-bench</code>, picks the fastest non-OOM result (with a 3% bias toward
+        higher <code>n_cpu_moe</code> for VRAM headroom), and applies both knobs. The
+        engine is stopped during the sweep.
       </p>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-        <label class="space-y-1">
-          <span class="text-zinc-400">Sweep (CSV)</span>
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+        <label class="space-y-1 md:col-span-2">
+          <span class="text-zinc-400">n-cpu-moe sweep (CSV)</span>
           <input x-model="at.sweep" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 font-mono text-xs" />
+        </label>
+        <label class="space-y-1">
+          <span class="text-zinc-400">KV types (CSV — leave empty for current)</span>
+          <input x-model="at.kvTypes" placeholder="q8_0,turbo3,turbo4"
+                 class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 font-mono text-xs" />
         </label>
         <label class="space-y-1">
           <span class="text-zinc-400">PP tokens</span>
@@ -699,6 +706,18 @@
           <span class="text-zinc-400">Threads (0=auto)</span>
           <input type="number" x-model.number="at.threads" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
         </label>
+      </div>
+      <div class="mt-2 text-[11px] text-zinc-500">
+        KV recipes:
+        <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='q8_0,turbo3,turbo4'">turbo compare</button>
+        ·
+        <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='q8_0,q4_0'">classic</button>
+        ·
+        <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='turbo3'">turbo3 only</button>
+        ·
+        <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes=''">current only (1-D)</button>
+        <span class="text-zinc-600 ml-2"
+              x-text="`= ${(at.sweep.split(',').filter(s=>s.trim()).length) * (at.kvTypes.split(',').filter(s=>s.trim()).length || 1)} bench runs`"></span>
       </div>
       <label class="flex items-center gap-2 mt-3 text-sm">
         <input type="checkbox" x-model="at.applyBest" class="accent-emerald-500" />
@@ -741,32 +760,45 @@
 
     <div class="grid md:grid-cols-2 gap-4">
       <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 overflow-hidden">
-        <div class="px-4 py-2 text-xs uppercase tracking-wider text-zinc-400 bg-zinc-900">Sweep results</div>
+        <div class="px-4 py-2 text-xs uppercase tracking-wider text-zinc-400 bg-zinc-900 flex justify-between items-center">
+          <span>Sweep results</span>
+          <span x-show="at.best" class="text-emerald-300 normal-case lowercase font-mono"
+                x-text="at.best ? `best: ${at.best.kv_type} · n_cpu_moe ${at.best.n_cpu_moe} @ ${(at.best.tg_tps||0).toFixed(2)} t/s` : ''"></span>
+        </div>
         <table class="w-full text-sm">
           <thead class="text-zinc-400 text-xs">
-            <tr><th class="text-left px-4 py-2">--n-cpu-moe</th><th class="text-right px-4 py-2">tg t/s</th><th class="text-right px-4 py-2">pp t/s</th><th class="text-center px-4 py-2"></th></tr>
+            <tr>
+              <th class="text-left px-3 py-2">kv</th>
+              <th class="text-left px-3 py-2">n-cpu-moe</th>
+              <th class="text-right px-3 py-2">tg t/s</th>
+              <th class="text-right px-3 py-2">pp t/s</th>
+              <th class="text-center px-3 py-2">status</th>
+            </tr>
           </thead>
           <tbody>
-            <template x-for="r in at.results" :key="r.n_cpu_moe">
+            <template x-for="r in at.results" :key="r.kv_type + ':' + r.n_cpu_moe">
               <tr class="border-t border-zinc-800"
                   :class="r.running ? 'bg-amber-500/10'
-                        : at.best && at.best.n_cpu_moe === r.n_cpu_moe ? 'bg-emerald-500/10'
+                        : at.best && at.best.n_cpu_moe === r.n_cpu_moe && at.best.kv_type === r.kv_type ? 'bg-emerald-500/10'
                         : ''">
-                <td class="px-4 py-2 font-mono flex items-center gap-2">
-                  <span x-show="r.running" class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                <td class="px-3 py-2 font-mono text-xs"
+                    :class="r.kv_type && r.kv_type.startsWith('turbo') ? 'text-fuchsia-300' : 'text-zinc-300'"
+                    x-text="r.kv_type || '—'"></td>
+                <td class="px-3 py-2 font-mono">
+                  <span x-show="r.running" class="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse mr-2"></span>
                   <span x-text="r.n_cpu_moe"></span>
                 </td>
-                <td class="px-4 py-2 text-right" x-text="r.tg_tps?.toFixed(2) || '—'"></td>
-                <td class="px-4 py-2 text-right" x-text="r.pp_tps?.toFixed(2) || '—'"></td>
-                <td class="px-4 py-2 text-center">
+                <td class="px-3 py-2 text-right font-mono" x-text="r.tg_tps?.toFixed(2) || '—'"></td>
+                <td class="px-3 py-2 text-right font-mono text-zinc-400" x-text="r.pp_tps?.toFixed(2) || '—'"></td>
+                <td class="px-3 py-2 text-center">
                   <span x-show="r.ok" class="text-emerald-400">ok</span>
-                  <span x-show="!r.ok && r.error" class="text-rose-400" :title="r.error">OOM/err</span>
+                  <span x-show="!r.ok && r.error && !r.running" class="text-rose-400" :title="r.error">OOM/err</span>
                   <span x-show="r.running" class="text-amber-300">running…</span>
                   <span x-show="r.pending && !r.running" class="text-zinc-500">queued</span>
                 </td>
               </tr>
             </template>
-            <tr x-show="!at.results.length"><td colspan="4" class="px-4 py-6 text-center text-zinc-500">no results yet</td></tr>
+            <tr x-show="!at.results.length"><td colspan="5" class="px-4 py-6 text-center text-zinc-500">no results yet</td></tr>
           </tbody>
         </table>
       </div>
@@ -840,6 +872,7 @@ function llamador() {
     // autotune
     at: {
       sweep: '48,40,36,32,28,24,20',
+      kvTypes: '',             // CSV; '' means "use the running cfg's kv_type"
       pp: 512, tg: 128, threads: 0, applyBest: true,
       running: false, status: '',
       activity: '',            // human-readable "what's happening right now"
@@ -1455,16 +1488,26 @@ function llamador() {
     // -------- autotune --------------------------------------------------
     async startAutotune() {
       if (this.at.running) return;
-      this.at.results = this.at.sweep.split(',').map(s => ({
-        n_cpu_moe: parseInt(s.trim(), 10), pending: true, ok: false, running: false,
-      }));
+      const sweepNs = this.at.sweep.split(',').map(s => parseInt(s.trim(), 10)).filter(Number.isFinite);
+      const kvList  = this.at.kvTypes.split(',').map(s => s.trim()).filter(Boolean);
+      // Empty kv list → backend benches against the running config kv_type.
+      // For local rendering we still want a placeholder so the table has rows.
+      const kvAxis = kvList.length ? kvList : [this.cfg?.kv_type || '?'];
+      this.at.results = [];
+      for (const kv of kvAxis) {
+        for (const n of sweepNs) {
+          this.at.results.push({ n_cpu_moe: n, kv_type: kv, pending: true, ok: false, running: false });
+        }
+      }
       this.at.best = null; this.at.log = '';
       this.at._stepStartedAt = null;
       this.at._stepDurations = [];
       this.at.running = true; this.at.status = 'starting…';
 
       const params = new URLSearchParams({
-        sweep: this.at.sweep, pp: this.at.pp, tg: this.at.tg,
+        sweep: this.at.sweep,
+        kv_types: this.at.kvTypes,
+        pp: this.at.pp, tg: this.at.tg,
         threads: this.at.threads, apply_best: this.at.applyBest,
       });
       let task_id;
@@ -1491,23 +1534,24 @@ function llamador() {
         }
         if (msg.type === 'step_start') {
           this.at.results.forEach(r => { r.running = false; });
-          const row = this.at.results.find(r => r.n_cpu_moe === msg.n_cpu_moe);
+          const row = this._atFindRow(msg.n_cpu_moe, msg.kv_type);
           if (row) { row.pending = true; row.running = true; }
           this.at._stepStartedAt = Date.now();
           this.at.activity = 'starting…';
-          this.at.status = `bench --n-cpu-moe ${msg.n_cpu_moe}`;
+          this.at.status = `bench kv=${msg.kv_type || '?'} n_cpu_moe=${msg.n_cpu_moe}`;
         } else if (msg.type === 'step_end') {
-          const row = this.at.results.find(r => r.n_cpu_moe === msg.n_cpu_moe);
+          const row = this._atFindRow(msg.n_cpu_moe, msg.kv_type);
           if (row) Object.assign(row, { pending:false, running:false, ok: msg.ok, tg_tps: msg.tg_tps, pp_tps: msg.pp_tps, error: msg.error });
           if (this.at._stepStartedAt) {
             this.at._stepDurations.push(Date.now() - this.at._stepStartedAt);
             this.at._stepStartedAt = null;
           }
         } else if (msg.type === 'best') {
-          this.at.best = { n_cpu_moe: msg.n_cpu_moe, tg_tps: msg.tg_tps };
-          this.at.status = `best: ${msg.n_cpu_moe} @ ${msg.tg_tps?.toFixed(2)} t/s`;
+          this.at.best = { n_cpu_moe: msg.n_cpu_moe, kv_type: msg.kv_type, tg_tps: msg.tg_tps, pp_tps: msg.pp_tps };
+          this.at.status = `best: kv=${msg.kv_type} n_cpu_moe=${msg.n_cpu_moe} @ ${msg.tg_tps?.toFixed(2)} t/s`;
         } else if (msg.type === 'applied') {
-          this.at.status += ' (applied)'; this.refresh();
+          this.at.status += ` (applied: kv=${msg.kv_type} n_cpu_moe=${msg.n_cpu_moe})`;
+          this.refresh();
         } else if (msg.type === 'done') {
           this.at.running = false;
           this.at.results.forEach(r => { r.running = false; });
@@ -1566,6 +1610,16 @@ function llamador() {
       } catch (e) {
         this.notify('Cancel request failed: ' + e.message, 'error');
       }
+    },
+
+    _atFindRow(n_cpu_moe, kv_type) {
+      // Prefer exact (n, kv) match; fall back to n-only for backward-
+      // compatibility with single-axis sweeps that don't carry kv_type.
+      let row = this.at.results.find(r => r.n_cpu_moe === n_cpu_moe && r.kv_type === kv_type);
+      if (!row && !kv_type) {
+        row = this.at.results.find(r => r.n_cpu_moe === n_cpu_moe);
+      }
+      return row;
     },
 
     atDoneCount() { return this.at.results.filter(r => !r.pending).length; },

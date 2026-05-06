@@ -45,6 +45,7 @@ _PP_ROW = re.compile(
 @dataclass
 class SweepStep:
     n_cpu_moe: int
+    kv_type: str = "q8_0"
     tg_tps: float | None = None
     pp_tps: float | None = None
     ok: bool = False
@@ -60,6 +61,7 @@ class AutotuneState:
     task_id: str
     model_file: str
     sweep: list[int]
+    kv_types: list[str] = field(default_factory=list)  # [] = single type from cfg
     pp: int = 512
     tg: int = 128
     threads: int = 0
@@ -84,6 +86,7 @@ class AutotuneRunner:
     def start(
         self,
         sweep: Iterable[int] | None = None,
+        kv_types: Iterable[str] | None = None,
         pp: int = 512,
         tg: int = 128,
         threads: int = 0,
@@ -93,12 +96,16 @@ class AutotuneRunner:
         cfg = load_config()
         target_model = model_file or cfg.model_file
         sweep_list = list(sweep) if sweep else [48, 40, 36, 32, 28, 24, 20]
+        # Empty list = bench against whatever KV type is in the running config.
+        # That keeps backward compat with old single-axis callers.
+        kv_list = [k.strip() for k in (kv_types or []) if k and k.strip()]
 
         task_id = f"autotune-{int(asyncio.get_event_loop().time())}"
         st = AutotuneState(
             task_id=task_id,
             model_file=target_model,
             sweep=sweep_list,
+            kv_types=kv_list,
             pp=pp,
             tg=tg,
             threads=threads,
@@ -150,10 +157,16 @@ class AutotuneRunner:
             except RuntimeError:
                 pass  # loop may be shutting down
 
+        # Resolve the KV type axis. Empty list = single type taken from the
+        # running config (backward-compat: old "1-D sweep over n_cpu_moe").
+        cfg_now = load_config()
+        kv_axis = st.kv_types or [cfg_now.kv_type]
+
         st.state = "running"
         await emit(
             "start",
             sweep=st.sweep,
+            kv_types=kv_axis,
             model=st.model_file,
             pp=st.pp,
             tg=st.tg,
@@ -169,64 +182,62 @@ class AutotuneRunner:
 
         engine_image = self._engine_image()
 
-        # 2) sweep
+        # 2) 2-D sweep: outer loop is KV type, inner loop is --n-cpu-moe.
         loop = asyncio.get_event_loop()
-        for n in st.sweep:
-            if st.cancel_requested:
-                await emit("info", message=f"cancelled before --n-cpu-moe {n}")
+        cancelled = False
+        for kv in kv_axis:
+            if cancelled:
                 break
-            step = SweepStep(n_cpu_moe=n)
-            st.steps.append(step)
-            await emit("step_start", n_cpu_moe=n)
-            try:
-                # Run the bench in a worker thread, but bound it so a hung
-                # llama-bench can't stall the whole sweep forever. Each
-                # output line is forwarded as a bench_log event so the UI
-                # can show live progress (model load, KV alloc, warmup,
-                # prompt-processing, generation, etc.).
-                def on_line(line: str) -> None:
-                    emit_threadsafe("bench_log", n_cpu_moe=n, line=line)
+            await emit("info", message=f"--cache-type-k/v {kv}")
+            for n in st.sweep:
+                if st.cancel_requested:
+                    cancelled = True
+                    await emit("info", message=f"cancelled before kv={kv} n_cpu_moe={n}")
+                    break
+                step = SweepStep(n_cpu_moe=n, kv_type=kv)
+                st.steps.append(step)
+                await emit("step_start", n_cpu_moe=n, kv_type=kv)
+                try:
+                    def on_line(line: str, _n=n, _kv=kv) -> None:
+                        emit_threadsafe("bench_log", n_cpu_moe=_n, kv_type=_kv, line=line)
 
-                output = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None, self._bench_once, engine_image, st, n, on_line,
-                    ),
-                    timeout=DEFAULT_STEP_TIMEOUT_SEC,
+                    output = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None, self._bench_once, engine_image, st, n, kv, on_line,
+                        ),
+                        timeout=DEFAULT_STEP_TIMEOUT_SEC,
+                    )
+                    step.raw = output
+                    pp_m = _PP_ROW.search(output)
+                    tg_m = _TG_ROW.search(output)
+                    if tg_m:
+                        step.tg_tps = float(tg_m.group(1))
+                    if pp_m:
+                        step.pp_tps = float(pp_m.group(1))
+                    step.ok = step.tg_tps is not None
+                    if not step.ok and not step.error:
+                        step.error = "no tg row in output (likely OOM)"
+                except asyncio.TimeoutError:
+                    step.error = f"timed out after {DEFAULT_STEP_TIMEOUT_SEC}s"
+                    step.ok = False
+                    cid = st.current_container_id
+                    if cid:
+                        try: self.client.containers.get(cid).kill()
+                        except Exception: pass
+                except Exception as e:  # noqa: BLE001
+                    step.error = str(e)
+                    step.ok = False
+                finally:
+                    st.current_container_id = None
+                await emit(
+                    "step_end",
+                    n_cpu_moe=n,
+                    kv_type=kv,
+                    ok=step.ok,
+                    pp_tps=step.pp_tps,
+                    tg_tps=step.tg_tps,
+                    error=step.error,
                 )
-                step.raw = output
-                pp_m = _PP_ROW.search(output)
-                tg_m = _TG_ROW.search(output)
-                if tg_m:
-                    step.tg_tps = float(tg_m.group(1))
-                if pp_m:
-                    step.pp_tps = float(pp_m.group(1))
-                step.ok = step.tg_tps is not None
-                if not step.ok and not step.error:
-                    # Bench returned but produced no parsable row — usually OOM.
-                    step.error = "no tg row in output (likely OOM)"
-            except asyncio.TimeoutError:
-                step.error = f"timed out after {DEFAULT_STEP_TIMEOUT_SEC}s"
-                step.ok = False
-                # Kill the bench container so it doesn't keep eating GPU/RAM
-                cid = st.current_container_id
-                if cid:
-                    try:
-                        self.client.containers.get(cid).kill()
-                    except Exception:
-                        pass
-            except Exception as e:  # noqa: BLE001
-                step.error = str(e)
-                step.ok = False
-            finally:
-                st.current_container_id = None
-            await emit(
-                "step_end",
-                n_cpu_moe=n,
-                ok=step.ok,
-                pp_tps=step.pp_tps,
-                tg_tps=step.tg_tps,
-                error=step.error,
-            )
 
         if st.cancel_requested:
             st.state = "cancelled"
@@ -252,16 +263,24 @@ class AutotuneRunner:
         await emit(
             "best",
             n_cpu_moe=st.best.n_cpu_moe,
+            kv_type=st.best.kv_type,
             tg_tps=st.best.tg_tps,
             pp_tps=st.best.pp_tps,
         )
 
-        # 4) optionally apply
+        # 4) optionally apply both knobs
         if st.apply_best and st.best:
             cfg = load_config()
             cfg.n_cpu_moe = st.best.n_cpu_moe
+            # Only overwrite kv_type if the schema accepts it — pydantic
+            # validates against the KVType literal, so an unknown turbo
+            # variant from a future image won't get persisted.
+            try:
+                cfg.kv_type = st.best.kv_type  # type: ignore[assignment]
+            except Exception:
+                pass
             save_config(cfg)
-            await emit("applied", n_cpu_moe=st.best.n_cpu_moe)
+            await emit("applied", n_cpu_moe=st.best.n_cpu_moe, kv_type=st.best.kv_type)
 
         # 5) restart engine (we stopped it earlier)
         try:
@@ -279,27 +298,31 @@ class AutotuneRunner:
         image: str,
         st: AutotuneState,
         n_cpu_moe: int,
+        kv_type: str,
         on_line=None,
     ) -> str:
         """Run llama-bench once in a fresh container, streaming output line-by-line.
 
         Runs with -r 1 (single repetition) so a slow MoE-on-CPU configuration
         produces a result in minutes instead of tens of minutes. We only need
-        a representative tg/pp number per n_cpu_moe to rank them.
+        a representative tg/pp number per (n_cpu_moe, kv_type) cell to rank them.
+
+        kv_type is passed via -ctk/-ctv so we can compare TurboQuant variants
+        (turbo3, turbo4) against the standard q8_0 / q4_0 KV quantizations
+        and pick the one that gives the highest tg t/s within the VRAM budget.
 
         Output is streamed via container.logs(stream=True, follow=True). Each
         complete line is passed to `on_line` (typically wired to the autotune
         WebSocket) so the UI can show what the bench is doing as it happens —
         model load, KV cache alloc, warmup, prompt processing, generation.
-
-        The spawned container id is registered on AutotuneState so an external
-        cancel/timeout can SIGKILL it.
         """
         cmd = [
             "llama-bench",
             "-m", f"/models/{st.model_file}",
             "-ngl", "999",
             "--n-cpu-moe", str(n_cpu_moe),
+            "-ctk", kv_type,
+            "-ctv", kv_type,
             "-fa", "1",
             "-p", str(st.pp),
             "-n", str(st.tg),
@@ -309,9 +332,9 @@ class AutotuneRunner:
             cmd += ["-t", str(st.threads)]
 
         host_models = self._host_models_dir()
-        log.info("autotune step: --n-cpu-moe %s", n_cpu_moe)
+        log.info("autotune step: kv=%s n_cpu_moe=%s", kv_type, n_cpu_moe)
         if on_line:
-            on_line(f"[bench] starting llama-bench --n-cpu-moe {n_cpu_moe} -p {st.pp} -n {st.tg}")
+            on_line(f"[bench] starting llama-bench kv={kv_type} --n-cpu-moe {n_cpu_moe} -p {st.pp} -n {st.tg}")
 
         container = None
         output_chunks: list[str] = []
