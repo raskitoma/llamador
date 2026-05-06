@@ -104,16 +104,20 @@ class ModelManager:
     def _attach_bytes(self, t: dict) -> dict:
         """Add bytes_downloaded to a task snapshot by stat'ing on-disk artefacts.
 
-        hf_hub_download (and hf_transfer) write to a temp path that contains
-        the target filename, then move into place. Looking at any file in
-        models_dir whose name contains the target filename catches both the
-        in-flight temp and the finished file.
+        hf_hub_download writes the in-flight bytes to a temp path nested
+        several levels deep (.cache/huggingface/download/<file>.<hash>.incomplete)
+        before renaming into place at models_dir/<file>. Walking recursively
+        catches both states with one pass.
         """
         target = t["file"]
         bytes_so_far = 0
         try:
-            for p in self.settings.models_dir.iterdir():
-                if target in p.name:
+            for p in self.settings.models_dir.rglob("*"):
+                if not p.is_file():
+                    continue
+                # Match either the final file or the temp file whose name
+                # starts with the target (hash + .incomplete suffix appended).
+                if p.name == target or p.name.startswith(target + "."):
                     try:
                         bytes_so_far = max(bytes_so_far, p.stat().st_size)
                     except OSError:
