@@ -11,7 +11,7 @@ pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, mon
    would copy out (logs, file names, API keys, model paths, etc.). Anything
    meant to be copyable opts in via .copyable or is naturally selectable. */
 body { -webkit-user-select: none; user-select: none; }
-input, textarea, select, pre, code, .copyable, [data-copyable] {
+input, textarea, select, pre, code, .copyable, [data-copyable], .log-line {
   -webkit-user-select: text;
   user-select: text;
 }

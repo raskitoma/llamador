@@ -485,27 +485,48 @@
 
   <!-- ============================== LOGS ==================================== -->
   <section x-show="tab === 'logs'" class="space-y-3">
+    <!-- Toolbar: pause / clear / reconnect, search, ordering -->
     <div class="flex flex-wrap gap-2 items-center">
       <button type="button" @click="logsPaused = !logsPaused"
               :class="logsPaused ? 'bg-amber-600' : 'bg-zinc-800'"
               class="px-3 py-1.5 rounded text-sm" x-text="logsPaused ? '▶ resume' : '⏸ pause'"></button>
-      <button type="button" @click="logs = []" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">🗑 clear view</button>
+      <button type="button" @click="logs = []; logCategories = []; selectedLogCategories = null"
+              class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">🗑 clear view</button>
       <button type="button" @click="reconnectLogs()" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">↻ reconnect</button>
-      <label class="flex items-center gap-2 text-xs text-zinc-400 ml-2">
+      <input type="search" x-model="logSearch" placeholder="🔍 search…"
+             class="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs w-48" />
+      <label class="flex items-center gap-2 text-xs text-zinc-400 ml-1">
         <input type="checkbox" x-model="logsNewestFirst" class="accent-emerald-500" />
         <span>Newest first</span>
       </label>
-      <span class="text-xs text-zinc-500 ml-auto" x-text="`${logs.length.toLocaleString()} lines`"></span>
+      <span class="text-xs text-zinc-500 ml-auto"
+            x-text="`${filteredLogs().length.toLocaleString()} / ${logs.length.toLocaleString()} lines`"></span>
     </div>
+    <!-- Category pills — auto-discovered as lines arrive -->
+    <div x-show="logCategories.length" class="flex flex-wrap gap-1 items-center">
+      <span class="text-[10px] uppercase tracking-wider text-zinc-500 mr-1">filter:</span>
+      <button type="button" @click="selectedLogCategories = null"
+              :class="!selectedLogCategories ? 'bg-emerald-600 text-zinc-100' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'"
+              class="px-2 py-0.5 rounded text-[10px] font-mono">all</button>
+      <template x-for="c in logCategories" :key="c">
+        <button type="button" @click="toggleLogCat(c)"
+                :class="selectedLogCategories && selectedLogCategories.includes(c) ? 'bg-emerald-600 text-zinc-100' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'"
+                class="px-2 py-0.5 rounded text-[10px] font-mono" x-text="c"></button>
+      </template>
+    </div>
+    <!-- Log viewer -->
     <div class="bg-black border border-zinc-800 rounded-xl p-3 h-[60vh] overflow-auto text-xs"
          x-ref="logsScroll">
-      <template x-for="l in (logsNewestFirst ? logs.slice().reverse() : logs)" :key="l.id">
+      <template x-for="l in (logsNewestFirst ? filteredLogs().slice().reverse() : filteredLogs())" :key="l.id">
         <div class="log-line flex gap-3 leading-tight py-0.5">
           <span class="log-ts text-zinc-600 shrink-0" x-text="fmtLogTs(l.ts)"></span>
-          <span class="text-zinc-200 whitespace-pre-wrap break-all" x-text="l.text"></span>
+          <span class="text-zinc-500 shrink-0 w-24 truncate" x-text="l.cat" :title="l.cat"></span>
+          <span class="text-zinc-200 whitespace-pre-wrap break-all flex-1" x-text="l.text"></span>
         </div>
       </template>
       <div x-show="!logs.length" class="text-zinc-600 text-center py-12">no log lines yet — engine boot lines will stream here</div>
+      <div x-show="logs.length && !filteredLogs().length"
+           class="text-zinc-600 text-center py-12">no lines match the current filter</div>
     </div>
   </section>
 
@@ -610,11 +631,14 @@ function llamador() {
     pullFile: 'Qwen3.6-35B-A3B-UD-Q4_K_M.gguf',
     pullTasks: [],          // running/done/error pull tasks shown above models table
     _pullPollTimer: null,
-    logs: [],            // [{id, ts, text}] — populated by the WS stream
+    logs: [],            // [{id, ts, text, cat}] — populated by the WS stream
     logsPaused: false,
     logsNewestFirst: true,
+    logSearch: '',
+    logCategories: [],            // every category seen so far, sorted
+    selectedLogCategories: null,  // null = all; otherwise an array of cats to keep
     _logsCounter: 0,
-    _logsCarry: '',      // unfinished line buffered between WS chunks
+    _logsCarry: '',               // unfinished line buffered between WS chunks
     _logsBufferCap: 4000,
     buildLog: '',
     kvTypes: ['f32','f16','q8_0','q4_0','q4_1','q5_0','q5_1','turbo3','turbo4'],
@@ -849,10 +873,17 @@ function llamador() {
       const parts = buf.split('\n');
       this._logsCarry = parts.pop();   // last element is the unfinished tail
       const now = Date.now();
+      let newCats = false;
       for (const text of parts) {
         if (!text.length && !this.logs.length) continue;  // skip leading blanks
-        this.logs.push({ id: ++this._logsCounter, ts: now, text });
+        const cat = this._extractLogCategory(text);
+        if (!this.logCategories.includes(cat)) {
+          this.logCategories.push(cat);
+          newCats = true;
+        }
+        this.logs.push({ id: ++this._logsCounter, ts: now, text, cat });
       }
+      if (newCats) this.logCategories.sort();
       // Cap the buffer so the DOM doesn't blow up on long-running engines.
       if (this.logs.length > this._logsBufferCap) {
         this.logs.splice(0, this.logs.length - this._logsBufferCap);
@@ -865,6 +896,42 @@ function llamador() {
         if (this.logsNewestFirst) el.scrollTop = 0;
         else el.scrollTop = el.scrollHeight;
       });
+    },
+
+    _extractLogCategory(text) {
+      if (!text) return 'other';
+      // Bracketed source tag: "[engine] applying config" → "engine"
+      const m1 = text.match(/^\[([^\]]+)\]/);
+      if (m1) return m1[1];
+      // First identifier token (covers "srv", "llama_context", "print_info", "main")
+      const m2 = text.match(/^([a-zA-Z_][\w-]*)/);
+      if (m2) return m2[1];
+      return 'other';
+    },
+
+    filteredLogs() {
+      let out = this.logs;
+      if (this.selectedLogCategories) {
+        const set = new Set(this.selectedLogCategories);
+        out = out.filter(l => set.has(l.cat));
+      }
+      const q = (this.logSearch || '').trim().toLowerCase();
+      if (q) out = out.filter(l => l.text.toLowerCase().includes(q));
+      return out;
+    },
+
+    toggleLogCat(c) {
+      if (!this.selectedLogCategories) {
+        // From "all" → narrow to just this one category
+        this.selectedLogCategories = [c];
+        return;
+      }
+      if (this.selectedLogCategories.includes(c)) {
+        const next = this.selectedLogCategories.filter(x => x !== c);
+        this.selectedLogCategories = next.length ? next : null;
+      } else {
+        this.selectedLogCategories = [...this.selectedLogCategories, c];
+      }
     },
 
     fmtLogTs(ms) {
