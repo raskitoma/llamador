@@ -1523,13 +1523,14 @@ function llamador() {
       const ws = new WebSocket(this.wsUrl(`/api/autotune/${task_id}/ws`));
       ws.onmessage = e => {
         const msg = JSON.parse(e.data);
+        const ts = this.fmtLogTs(Date.now());
         // bench_log lines get rendered raw; everything else as a JSON event.
         if (msg.type === 'bench_log') {
-          this.at.log += msg.line + '\n';
+          this.at.log += `${ts}  ${msg.line}\n`;
           this._atLogTrim();
           this.at.activity = this._inferBenchStage(msg.line) || this.at.activity;
         } else {
-          this.at.log += JSON.stringify(msg) + '\n';
+          this.at.log += `${ts}  · ${JSON.stringify(msg)}\n`;
           this._atLogTrim();
         }
         if (msg.type === 'step_start') {

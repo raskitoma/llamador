@@ -72,6 +72,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl libcurl4 libgomp1 tini python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Drop the CUDA forward-compat shims. They ship with the toolkit base image
+# and *only* work on data-center GPUs (Tesla et al.). On consumer Pascal
+# (compute 6.1, e.g. GTX 1080) the linker grabs /usr/local/cuda/compat/
+# libcuda.so.1 first and then fails CUDA init with "forward compatibility
+# was attempted on non supported HW". Without the compat dir, the dynamic
+# linker falls through to the host driver's libcuda (mounted by the NVIDIA
+# Container Toolkit at /usr/local/nvidia/lib*), which works natively on
+# Pascal. Confirmed end-to-end: removing this dir makes llama-bench go
+# from 0.15 → 5.5 t/s for prompt processing on the same hardware.
+RUN rm -rf /usr/local/cuda/compat /usr/local/cuda-*/compat 2>/dev/null || true
+
 # Pascal runtime tuning baked into the image; can be overridden at `docker run`.
 ENV GGML_CUDA_FORCE_MMQ=1 \
     GGML_CUDA_F16=0
