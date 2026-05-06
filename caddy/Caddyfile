@@ -30,14 +30,16 @@
     # /v1/* → backend (so the API-key gate runs). The backend then proxies
     # to llama-engine. If you want to skip the auth hop entirely (LAN-only,
     # no key store), point this directly at llama-engine:8080.
-    handle_path /v1/* {
+    # Use `handle` (not `handle_path`) so the /v1 prefix reaches the backend
+    # — the backend's /v1/{path:path} route expects the full path. The old
+    # handle_path + rewrite combo produced "/v1//chat/completions{?}" with a
+    # double slash and an unexpanded query placeholder.
+    handle /v1/* {
         reverse_proxy backend:8000 {
             transport http {
                 read_timeout 0
                 write_timeout 0
             }
-            # Don't strip /v1 — the backend handles the full path.
-            rewrite /v1/{http.request.uri.path}{?{query}}
         }
     }
 
