@@ -52,6 +52,9 @@ class SweepStep:
     error: str | None = None
 
 
+DEFAULT_STEP_TIMEOUT_SEC = 600  # 10 minutes per llama-bench run
+
+
 @dataclass
 class AutotuneState:
     task_id: str
@@ -65,6 +68,8 @@ class AutotuneState:
     steps: list[SweepStep] = field(default_factory=list)
     best: SweepStep | None = None
     error: str | None = None
+    cancel_requested: bool = False
+    current_container_id: str | None = None  # so cancel can SIGKILL the bench
 
 
 class AutotuneRunner:
@@ -111,12 +116,39 @@ class AutotuneRunner:
     def stream(self, task_id: str) -> asyncio.Queue[dict] | None:
         return self._streams.get(task_id)
 
+    def cancel(self, task_id: str) -> bool:
+        """Mark a sweep cancelled and kill its currently-running bench container.
+
+        The runner loop checks `cancel_requested` between steps; killing the
+        active container makes the in-flight step return immediately with a
+        non-zero exit so we don't have to wait for it to finish naturally.
+        """
+        st = self._tasks.get(task_id)
+        if st is None or st.state not in ("queued", "running"):
+            return False
+        st.cancel_requested = True
+        cid = st.current_container_id
+        if cid:
+            try:
+                self.client.containers.get(cid).kill()
+            except Exception as e:  # noqa: BLE001
+                log.info("cancel: container %s already gone: %s", cid, e)
+        return True
+
     # ------------------------------------------------------------- runner
     async def _run(self, st: AutotuneState) -> None:
         q = self._streams[st.task_id]
+        loop = asyncio.get_running_loop()
 
         async def emit(kind: str, **payload):
             await q.put({"type": kind, **payload})
+
+        def emit_threadsafe(kind: str, **payload):
+            """Schedule a queue put from a worker thread (bench streamer)."""
+            try:
+                loop.call_soon_threadsafe(q.put_nowait, {"type": kind, **payload})
+            except RuntimeError:
+                pass  # loop may be shutting down
 
         st.state = "running"
         await emit(
@@ -140,12 +172,26 @@ class AutotuneRunner:
         # 2) sweep
         loop = asyncio.get_event_loop()
         for n in st.sweep:
+            if st.cancel_requested:
+                await emit("info", message=f"cancelled before --n-cpu-moe {n}")
+                break
             step = SweepStep(n_cpu_moe=n)
             st.steps.append(step)
             await emit("step_start", n_cpu_moe=n)
             try:
-                output = await loop.run_in_executor(
-                    None, self._bench_once, engine_image, st, n
+                # Run the bench in a worker thread, but bound it so a hung
+                # llama-bench can't stall the whole sweep forever. Each
+                # output line is forwarded as a bench_log event so the UI
+                # can show live progress (model load, KV alloc, warmup,
+                # prompt-processing, generation, etc.).
+                def on_line(line: str) -> None:
+                    emit_threadsafe("bench_log", n_cpu_moe=n, line=line)
+
+                output = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None, self._bench_once, engine_image, st, n, on_line,
+                    ),
+                    timeout=DEFAULT_STEP_TIMEOUT_SEC,
                 )
                 step.raw = output
                 pp_m = _PP_ROW.search(output)
@@ -155,9 +201,24 @@ class AutotuneRunner:
                 if pp_m:
                     step.pp_tps = float(pp_m.group(1))
                 step.ok = step.tg_tps is not None
+                if not step.ok and not step.error:
+                    # Bench returned but produced no parsable row — usually OOM.
+                    step.error = "no tg row in output (likely OOM)"
+            except asyncio.TimeoutError:
+                step.error = f"timed out after {DEFAULT_STEP_TIMEOUT_SEC}s"
+                step.ok = False
+                # Kill the bench container so it doesn't keep eating GPU/RAM
+                cid = st.current_container_id
+                if cid:
+                    try:
+                        self.client.containers.get(cid).kill()
+                    except Exception:
+                        pass
             except Exception as e:  # noqa: BLE001
                 step.error = str(e)
                 step.ok = False
+            finally:
+                st.current_container_id = None
             await emit(
                 "step_end",
                 n_cpu_moe=n,
@@ -166,6 +227,13 @@ class AutotuneRunner:
                 tg_tps=step.tg_tps,
                 error=step.error,
             )
+
+        if st.cancel_requested:
+            st.state = "cancelled"
+            await emit("done", best=None, error="cancelled by user")
+            try: self.dm.start()
+            except Exception: pass
+            return
 
         # 3) pick the best (highest tg, tie-break toward higher n_cpu_moe for headroom)
         candidates = [s for s in st.steps if s.ok and s.tg_tps is not None]
@@ -206,9 +274,27 @@ class AutotuneRunner:
         await emit("done", best=st.best.n_cpu_moe if st.best else None)
 
     # ---------------------------------------------------------- bench step
-    def _bench_once(self, image: str, st: AutotuneState, n_cpu_moe: int) -> str:
-        """Run llama-bench once in a fresh container. Returns combined stdout/stderr."""
-        s = self.settings
+    def _bench_once(
+        self,
+        image: str,
+        st: AutotuneState,
+        n_cpu_moe: int,
+        on_line=None,
+    ) -> str:
+        """Run llama-bench once in a fresh container, streaming output line-by-line.
+
+        Runs with -r 1 (single repetition) so a slow MoE-on-CPU configuration
+        produces a result in minutes instead of tens of minutes. We only need
+        a representative tg/pp number per n_cpu_moe to rank them.
+
+        Output is streamed via container.logs(stream=True, follow=True). Each
+        complete line is passed to `on_line` (typically wired to the autotune
+        WebSocket) so the UI can show what the bench is doing as it happens —
+        model load, KV cache alloc, warmup, prompt processing, generation.
+
+        The spawned container id is registered on AutotuneState so an external
+        cancel/timeout can SIGKILL it.
+        """
         cmd = [
             "llama-bench",
             "-m", f"/models/{st.model_file}",
@@ -217,28 +303,63 @@ class AutotuneRunner:
             "-fa", "1",
             "-p", str(st.pp),
             "-n", str(st.tg),
+            "-r", "1",
         ]
         if st.threads > 0:
             cmd += ["-t", str(st.threads)]
 
-        # Mount the host's models dir into the bench container.
         host_models = self._host_models_dir()
         log.info("autotune step: --n-cpu-moe %s", n_cpu_moe)
+        if on_line:
+            on_line(f"[bench] starting llama-bench --n-cpu-moe {n_cpu_moe} -p {st.pp} -n {st.tg}")
+
+        container = None
+        output_chunks: list[str] = []
+        line_buf = ""
         try:
-            output = self.client.containers.run(
+            container = self.client.containers.run(
                 image=image,
                 command=cmd,
                 entrypoint=[""],
-                remove=True,
+                detach=True,
+                remove=False,
                 device_requests=[docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])],
                 volumes={host_models: {"bind": "/models", "mode": "ro"}},
                 stdout=True,
                 stderr=True,
             )
-            return output.decode(errors="replace") if isinstance(output, bytes) else str(output)
-        except docker.errors.ContainerError as e:
-            # Non-zero exit → bench failed (most likely OOM). Capture stderr.
-            return (e.stderr.decode(errors="replace") if e.stderr else str(e))
+            st.current_container_id = container.id
+
+            # Stream stdout+stderr while the bench runs.
+            for raw in container.logs(stream=True, follow=True, stdout=True, stderr=True):
+                chunk = raw.decode(errors="replace") if isinstance(raw, bytes) else str(raw)
+                output_chunks.append(chunk)
+                if on_line:
+                    line_buf += chunk
+                    while "\n" in line_buf:
+                        line, line_buf = line_buf.split("\n", 1)
+                        if line:
+                            on_line(line)
+            # Flush any tail without trailing newline
+            if on_line and line_buf.strip():
+                on_line(line_buf)
+
+            # Drain the exit code; logs() unblocks once the container exits
+            # but wait() is what guarantees the inspect is up to date.
+            result = container.wait()
+            text = "".join(output_chunks)
+            if result.get("StatusCode", 0) != 0 and not text.strip():
+                text = f"bench exited {result.get('StatusCode')} (no output)"
+            if on_line:
+                on_line(f"[bench] exit {result.get('StatusCode', '?')}")
+            return text
+        finally:
+            if container is not None:
+                try:
+                    container.remove(force=True)
+                except Exception:
+                    pass
+            st.current_container_id = None
 
     # ----------------------------------------------------- engine helpers
     def _engine_image(self) -> str:

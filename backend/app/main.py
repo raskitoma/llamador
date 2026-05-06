@@ -248,6 +248,12 @@ def get_autotune(task_id: str) -> dict:
             "sweep": st.sweep, "steps": [s.__dict__ for s in st.steps],
             "best": st.best.__dict__ if st.best else None, "error": st.error}
 
+@app.post("/api/autotune/{task_id}/cancel", dependencies=[Depends(auth)])
+def cancel_autotune(task_id: str) -> dict:
+    if not autotune.cancel(task_id):
+        raise HTTPException(404, "no running task with that id")
+    return {"cancelled": task_id}
+
 @app.websocket("/api/autotune/{task_id}/ws")
 async def ws_autotune(ws: WebSocket, task_id: str) -> None:
     await ws.accept()

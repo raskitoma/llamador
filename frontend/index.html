@@ -478,49 +478,53 @@
             <th class="px-3 py-2 text-right">actions</th>
           </tr>
         </thead>
-        <tbody>
-          <template x-for="k in apiKeys" :key="k.id">
-            <template>
-              <tr class="border-t border-zinc-800 hover:bg-zinc-900/30">
-                <td class="px-3 py-2 font-medium" x-text="k.name"></td>
-                <td class="px-3 py-2 font-mono text-xs text-zinc-400" x-text="k.id"></td>
-                <td class="px-3 py-2 font-mono text-xs" x-text="k.key_preview"></td>
-                <td class="px-3 py-2 text-right font-mono text-xs"
-                    :class="(k.request_count||0) > 0 ? 'text-emerald-300' : 'text-zinc-500'"
-                    x-text="(k.request_count || 0).toLocaleString()"></td>
-                <td class="px-3 py-2 font-mono text-xs text-zinc-300" x-text="k.last_ip || '—'"></td>
-                <td class="px-3 py-2 text-xs text-zinc-300 max-w-xs truncate"
-                    :title="k.last_user_agent || ''"
-                    x-text="fmtUA(k.last_user_agent)"></td>
-                <td class="px-3 py-2 text-xs text-zinc-400" x-text="fmtTime(k.last_used_at)"></td>
-                <td class="px-3 py-2 text-right whitespace-nowrap space-x-3">
-                  <button type="button" @click="toggleKeyExpanded(k.id)"
-                          class="text-xs text-zinc-400 hover:text-zinc-200"
-                          x-text="expandedKeys.includes(k.id) ? '▾ hide' : '▸ history'"
-                          :disabled="!(k.recent_uses && k.recent_uses.length)"
-                          :class="!(k.recent_uses && k.recent_uses.length) ? 'opacity-30 cursor-not-allowed' : ''"></button>
-                  <button type="button" @click="renameKey(k)" class="text-xs text-emerald-400 hover:underline">rename</button>
-                  <button type="button" @click="revokeKey(k)" class="text-xs text-rose-400 hover:underline">revoke</button>
-                </td>
-              </tr>
-              <tr x-show="expandedKeys.includes(k.id) && k.recent_uses && k.recent_uses.length"
-                  class="border-t border-zinc-800/60 bg-zinc-950/40">
-                <td colspan="8" class="px-3 py-3">
-                  <div class="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Recent activity (last <span x-text="(k.recent_uses||[]).length"></span>)</div>
-                  <ul class="space-y-1 text-xs">
-                    <template x-for="u in (k.recent_uses || []).slice().reverse()" :key="u.ts">
-                      <li class="flex gap-3 font-mono">
-                        <span class="text-zinc-500 shrink-0 w-44" x-text="fmtTime(u.ts)"></span>
-                        <span class="text-zinc-300 shrink-0 w-32" x-text="u.ip || '—'"></span>
-                        <span class="text-zinc-400 truncate flex-1" :title="u.ua" x-text="fmtUA(u.ua)"></span>
-                      </li>
-                    </template>
-                  </ul>
-                </td>
-              </tr>
-            </template>
-          </template>
-          <tr x-show="!apiKeys.length">
+        <!-- One <tbody> per key — HTML allows multiple tbodies, and using a
+             tbody here lets a single x-for emit two <tr> elements (the row
+             plus the optional history row) without needing an Alpine
+             fragment, which doesn't exist. -->
+        <template x-for="k in apiKeys" :key="k.id">
+          <tbody>
+            <tr class="border-t border-zinc-800 hover:bg-zinc-900/30">
+              <td class="px-3 py-2 font-medium" x-text="k.name"></td>
+              <td class="px-3 py-2 font-mono text-xs text-zinc-400" x-text="k.id"></td>
+              <td class="px-3 py-2 font-mono text-xs" x-text="k.key_preview"></td>
+              <td class="px-3 py-2 text-right font-mono text-xs"
+                  :class="(k.request_count||0) > 0 ? 'text-emerald-300' : 'text-zinc-500'"
+                  x-text="(k.request_count || 0).toLocaleString()"></td>
+              <td class="px-3 py-2 font-mono text-xs text-zinc-300" x-text="k.last_ip || '—'"></td>
+              <td class="px-3 py-2 text-xs text-zinc-300 max-w-xs truncate"
+                  :title="k.last_user_agent || ''"
+                  x-text="fmtUA(k.last_user_agent)"></td>
+              <td class="px-3 py-2 text-xs text-zinc-400" x-text="fmtTime(k.last_used_at)"></td>
+              <td class="px-3 py-2 text-right whitespace-nowrap space-x-3">
+                <button type="button" @click="toggleKeyExpanded(k.id)"
+                        class="text-xs text-zinc-400 hover:text-zinc-200"
+                        x-text="expandedKeys.includes(k.id) ? '▾ hide' : '▸ history'"
+                        :disabled="!(k.recent_uses && k.recent_uses.length)"
+                        :class="!(k.recent_uses && k.recent_uses.length) ? 'opacity-30 cursor-not-allowed' : ''"></button>
+                <button type="button" @click="renameKey(k)" class="text-xs text-emerald-400 hover:underline">rename</button>
+                <button type="button" @click="revokeKey(k)" class="text-xs text-rose-400 hover:underline">revoke</button>
+              </td>
+            </tr>
+            <tr x-show="expandedKeys.includes(k.id) && k.recent_uses && k.recent_uses.length"
+                class="border-t border-zinc-800/60 bg-zinc-950/40">
+              <td colspan="8" class="px-3 py-3">
+                <div class="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Recent activity (last <span x-text="(k.recent_uses||[]).length"></span>)</div>
+                <ul class="space-y-1 text-xs">
+                  <template x-for="u in (k.recent_uses || []).slice().reverse()" :key="u.ts">
+                    <li class="flex gap-3 font-mono">
+                      <span class="text-zinc-500 shrink-0 w-44" x-text="fmtTime(u.ts)"></span>
+                      <span class="text-zinc-300 shrink-0 w-32" x-text="u.ip || '—'"></span>
+                      <span class="text-zinc-400 truncate flex-1" :title="u.ua" x-text="fmtUA(u.ua)"></span>
+                    </li>
+                  </template>
+                </ul>
+              </td>
+            </tr>
+          </tbody>
+        </template>
+        <tbody x-show="!apiKeys.length">
+          <tr>
             <td colspan="8" class="px-3 py-6 text-center text-zinc-500">
               No keys yet — <code>/v1</code> is open to anyone on this network.<br>
               Create one to lock it down.
@@ -681,22 +685,31 @@
           <span x-show="!at.running">▶ Start sweep</span>
           <span x-show="at.running">running…</span>
         </button>
+        <button type="button" x-show="at.running" @click="cancelAutotune()"
+                class="px-3 py-1.5 rounded bg-rose-700 hover:bg-rose-600 text-sm">⏹ Cancel</button>
         <span class="text-xs text-zinc-500" x-text="at.status"></span>
       </div>
 
-      <!-- Progress bar — visible only while a sweep is active or just finished -->
-      <div x-show="at.results.length" class="mt-4 space-y-1">
-        <div class="flex justify-between text-xs text-zinc-400 font-mono">
-          <span x-text="`step ${atDoneCount()} / ${at.results.length}`"></span>
-          <span class="space-x-3">
-            <span x-show="at.running && atEtaText()" class="text-amber-300" x-text="'ETA ' + atEtaText()"></span>
-            <span x-show="!at.running" class="text-emerald-400">complete</span>
-          </span>
+      <!-- Live activity row + progress bar — visible while a sweep is active -->
+      <div x-show="at.results.length" class="mt-4 space-y-2">
+        <!-- Activity hint (parsed from streamed bench output) -->
+        <div x-show="at.running" class="flex items-center gap-2 text-xs">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+          <span class="text-amber-200" x-text="at.activity || 'waiting for bench output…'"></span>
         </div>
-        <div class="h-2 bg-zinc-800 rounded overflow-hidden">
-          <div class="h-full transition-all duration-300"
-               :class="at.running ? 'bg-amber-500' : 'bg-emerald-500'"
-               :style="`width: ${atProgressPct()}%`"></div>
+        <div class="space-y-1">
+          <div class="flex justify-between text-xs text-zinc-400 font-mono">
+            <span x-text="`step ${atDoneCount()} / ${at.results.length}`"></span>
+            <span class="space-x-3">
+              <span x-show="at.running && atEtaText()" class="text-amber-300" x-text="'ETA ' + atEtaText()"></span>
+              <span x-show="!at.running" class="text-emerald-400">complete</span>
+            </span>
+          </div>
+          <div class="h-2 bg-zinc-800 rounded overflow-hidden">
+            <div class="h-full transition-all duration-300"
+                 :class="at.running ? 'bg-amber-500' : 'bg-emerald-500'"
+                 :style="`width: ${atProgressPct()}%`"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -735,10 +748,12 @@
 
       <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 overflow-hidden">
         <div class="px-4 py-2 text-xs uppercase tracking-wider text-zinc-400 bg-zinc-900 flex items-center justify-between">
-          <span>Event log</span>
-          <button @click="at.log=''" class="text-xs text-zinc-300 hover:text-white">🗑 clear</button>
+          <span>Event log <span class="text-zinc-600 normal-case lowercase">— live bench output</span></span>
+          <button type="button" @click="at.log=''" class="text-xs text-zinc-300 hover:text-white">🗑 clear</button>
         </div>
-        <pre class="bg-black p-4 h-72 overflow-auto text-xs whitespace-pre-wrap" x-text="at.log"></pre>
+        <pre x-ref="atLogPre"
+             x-effect="at.log; $nextTick(() => { if ($refs.atLogPre) $refs.atLogPre.scrollTop = $refs.atLogPre.scrollHeight; })"
+             class="bg-black p-4 h-96 overflow-auto text-xs whitespace-pre-wrap" x-text="at.log"></pre>
       </div>
     </div>
   </section>
@@ -795,10 +810,13 @@ function llamador() {
       sweep: '48,40,36,32,28,24,20',
       pp: 512, tg: 128, threads: 0, applyBest: true,
       running: false, status: '',
+      activity: '',            // human-readable "what's happening right now"
       results: [], best: null, log: '',
+      task_id: null,           // current sweep id, used by Cancel
       _stepStartedAt: null,    // ms when the current step kicked off
       _stepDurations: [],      // completed step durations in ms (for ETA averaging)
     },
+    _atLogCap: 200_000,        // cap log buffer at ~200KB so the DOM stays snappy
 
     async boot() {
       await this.refresh();
@@ -1146,6 +1164,7 @@ function llamador() {
       if (!r.ok) { this.notify(`Key creation failed (HTTP ${r.status})`, 'error'); return; }
       const rec = await r.json();
       this.lastNewKey = rec.key;
+      this.newKeyName = '';
       this.notify(`Key "${rec.name}" created — copy the secret now`, 'success');
       this.newKeyName = '';
       this.refreshClients();
@@ -1421,17 +1440,26 @@ function llamador() {
       } catch (e) {
         this.at.running = false; this.at.status = 'failed: ' + e.message; return;
       }
+      this.at.task_id = task_id;
       this.at.status = 'task ' + task_id;
       const ws = new WebSocket(this.wsUrl(`/api/autotune/${task_id}/ws`));
       ws.onmessage = e => {
         const msg = JSON.parse(e.data);
-        this.at.log += JSON.stringify(msg) + '\n';
+        // bench_log lines get rendered raw; everything else as a JSON event.
+        if (msg.type === 'bench_log') {
+          this.at.log += msg.line + '\n';
+          this._atLogTrim();
+          this.at.activity = this._inferBenchStage(msg.line) || this.at.activity;
+        } else {
+          this.at.log += JSON.stringify(msg) + '\n';
+          this._atLogTrim();
+        }
         if (msg.type === 'step_start') {
-          // Mark previously running rows as no-longer-running (defensive)
           this.at.results.forEach(r => { r.running = false; });
           const row = this.at.results.find(r => r.n_cpu_moe === msg.n_cpu_moe);
           if (row) { row.pending = true; row.running = true; }
           this.at._stepStartedAt = Date.now();
+          this.at.activity = 'starting…';
           this.at.status = `bench --n-cpu-moe ${msg.n_cpu_moe}`;
         } else if (msg.type === 'step_end') {
           const row = this.at.results.find(r => r.n_cpu_moe === msg.n_cpu_moe);
@@ -1454,6 +1482,55 @@ function llamador() {
       };
       ws.onclose = () => { this.at.running = false; this.at.results.forEach(r => { r.running = false; }); };
       ws.onerror = () => { this.at.running = false; this.at.status = 'ws error'; };
+    },
+
+    _atLogTrim() {
+      if (this.at.log.length > this._atLogCap) {
+        // Drop the oldest 25% so we don't trim every line.
+        this.at.log = this.at.log.slice(-Math.floor(this._atLogCap * 0.75));
+      }
+    },
+
+    _inferBenchStage(line) {
+      // Map common llama-bench lines to a short status hint.
+      if (!line) return '';
+      const s = line.toLowerCase();
+      if (s.includes('load_tensors:'))                       return '📦 loading tensors';
+      if (s.includes('llama_model_loader:') && s.includes('loading'))
+                                                              return '📦 loading model';
+      if (s.includes('llama_kv_cache:') && s.includes('size'))
+                                                              return '🧠 allocating KV cache';
+      if (s.includes('warming up'))                           return '🔥 warming up';
+      if (s.includes('cuda error') || s.includes('out of memory'))
+                                                              return '❌ CUDA out of memory';
+      if (s.includes('failed to allocate'))                   return '❌ allocation failed';
+      if (s.includes('ggml_assert'))                          return '❌ assertion failed';
+      if (s.includes('common_init_from_params:'))             return '⚙ initialising context';
+      if (s.includes('|') && s.includes('pp') && s.includes('t/s'))
+                                                              return '🟢 prompt benchmark complete';
+      if (s.includes('|') && s.includes('tg') && s.includes('t/s'))
+                                                              return '🟢 generation benchmark complete';
+      if (s.match(/\bpp\d+\b/))                               return '⚡ running prompt-processing';
+      if (s.match(/\btg\d+\b/))                               return '⚡ running token-generation';
+      if (s.includes('[bench] starting'))                     return '🚀 starting bench';
+      if (s.includes('[bench] exit'))                         return '✓ bench finished';
+      return '';
+    },
+
+    async cancelAutotune() {
+      if (!this.at.task_id) return;
+      const ok = await this.confirmDialog(
+        'Stop the running sweep? The current bench step will be killed; partial results are kept.',
+        { title: 'Cancel sweep', okText: 'Stop sweep', okClass: 'bg-rose-600 hover:bg-rose-500' },
+      );
+      if (!ok) return;
+      try {
+        const r = await fetch(this.apiBase + `/api/autotune/${this.at.task_id}/cancel`, { method: 'POST' });
+        if (r.ok) this.notify('Cancelling…', 'warning');
+        else     this.notify(`Cancel failed (HTTP ${r.status})`, 'error');
+      } catch (e) {
+        this.notify('Cancel request failed: ' + e.message, 'error');
+      }
     },
 
     atDoneCount() { return this.at.results.filter(r => !r.pending).length; },
