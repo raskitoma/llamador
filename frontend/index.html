@@ -243,8 +243,10 @@
               <span class="text-xs"
                     :class="t.state === 'running' ? 'text-amber-300'
                                                   : t.state === 'done'    ? 'text-emerald-300'
-                                                                          : 'text-rose-300'"
-                    x-text="t.state === 'running' ? 'downloading…' : t.state"></span>
+                                                                          : 'text-rose-300'">
+                <span x-text="t.state === 'running' ? 'downloading…' : t.state"></span>
+                <span x-show="pullSpeedText(t)" class="text-zinc-500" x-text="' · ' + pullSpeedText(t)"></span>
+              </span>
               <button type="button" x-show="t.state !== 'running'" @click="dismissPullTask(t.id)"
                       aria-label="Dismiss"
                       class="text-xs text-zinc-500 hover:text-zinc-300 shrink-0">✕</button>
@@ -650,14 +652,31 @@ function llamador() {
       const tick = async () => {
         try {
           const tasks = await fetch(this.apiBase + '/api/tasks').then(r => r.json());
-          // Keep only HF pulls. Build/autotune tasks live elsewhere in the UI.
-          this.pullTasks = tasks.filter(t => String(t.id).startsWith('pull-'));
+          const now = Date.now();
+          // Carry _speed and _at across polls so we can compute instantaneous
+          // bytes/sec from the delta. Light EMA smoothing (alpha=0.4) so the
+          // number doesn't jitter wildly every 2s tick.
+          const prev = new Map(this.pullTasks.map(t => [t.id, t]));
+          this.pullTasks = tasks
+            .filter(t => String(t.id).startsWith('pull-'))
+            .map(t => {
+              const p = prev.get(t.id);
+              let speed = p?._speed || 0;
+              if (p && t.state === 'running' && p._at) {
+                const dt = (now - p._at) / 1000;
+                const db = (t.bytes_downloaded || 0) - (p.bytes_downloaded || 0);
+                if (dt > 0.1 && db >= 0) {
+                  const inst = db / dt;
+                  speed = speed > 0 ? speed * 0.6 + inst * 0.4 : inst;
+                }
+              }
+              return { ...t, _at: now, _speed: speed };
+            });
         } catch {}
-        // Stop polling once nothing is in flight; keep last completed entries visible.
         if (!this.pullTasks.some(t => t.state === 'running')) {
           clearInterval(this._pullPollTimer);
           this._pullPollTimer = null;
-          this.refresh();   // refresh models list so the new file shows up
+          this.refresh();
         }
       };
       tick();
@@ -678,6 +697,11 @@ function llamador() {
       const cur = this.fmtBytes(t.bytes_downloaded || 0);
       if (t.total_bytes) return `${cur} / ${this.fmtBytes(t.total_bytes)}`;
       return cur;
+    },
+
+    pullSpeedText(t) {
+      if (t.state !== 'running' || !t._speed) return '';
+      return this.fmtBytes(t._speed) + '/s';
     },
 
     async del(name) {
