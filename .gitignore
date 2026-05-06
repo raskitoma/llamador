@@ -31,3 +31,5 @@ node_modules/
 
 # docker
 .docker/
+.claude/settings.local.json
+.claude/settings.json
