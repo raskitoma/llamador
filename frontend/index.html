@@ -51,62 +51,139 @@
       <!-- knobs -->
       <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
         <h2 class="font-medium mb-4">Engine knobs</h2>
-        <div class="grid grid-cols-2 gap-4 text-sm">
-          <label class="space-y-1">
-            <span class="text-zinc-400">Model file</span>
-            <select x-model="cfg.model_file" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5">
-              <template x-for="m in models" :key="m.name">
-                <option :value="m.name" x-text="m.name"></option>
-              </template>
-            </select>
-          </label>
-          <label class="space-y-1">
-            <span class="text-zinc-400">Alias</span>
-            <input x-model="cfg.alias" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
-          </label>
-          <label class="space-y-1">
-            <span class="text-zinc-400">--n-cpu-moe (0–48)</span>
-            <input type="number" x-model.number="cfg.n_cpu_moe" min="0" max="64"
-                   class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
-          </label>
-          <label class="space-y-1">
-            <span class="text-zinc-400">Context</span>
-            <input type="number" x-model.number="cfg.ctx" min="512" max="262144" step="512"
-                   class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
-          </label>
-          <label class="space-y-1">
-            <span class="text-zinc-400">KV cache type</span>
-            <select x-model="cfg.kv_type" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5">
-              <template x-for="t in kvTypes" :key="t"><option :value="t" x-text="t"></option></template>
-            </select>
-          </label>
-          <label class="space-y-1">
-            <span class="text-zinc-400">FlashAttention</span>
-            <select x-model="cfg.flash_attn" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5">
-              <option value="on">on</option><option value="off">off</option>
-            </select>
-          </label>
-          <label class="space-y-1">
-            <span class="text-zinc-400">Threads (0=auto)</span>
-            <input type="number" x-model.number="cfg.threads" min="0" max="256"
-                   class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
-          </label>
-          <label class="space-y-1">
-            <span class="text-zinc-400">Batch / micro</span>
-            <div class="flex gap-1">
-              <input type="number" x-model.number="cfg.batch" class="w-1/2 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
-              <input type="number" x-model.number="cfg.ubatch" class="w-1/2 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
-            </div>
-          </label>
-          <label class="space-y-1 col-span-2">
-            <span class="text-zinc-400">Extra args (raw)</span>
+
+        <!-- Datalists for "suggested" values that show up in the input dropdown
+             without forcing a fixed enum. The user can still type any value. -->
+        <datalist id="ctx-suggestions">
+          <option value="2048">2K — minimal</option>
+          <option value="4096">4K — common</option>
+          <option value="8192">8K — default</option>
+          <option value="16384">16K — long form</option>
+          <option value="32768">32K — RAG / agent</option>
+          <option value="65536">64K — very long</option>
+          <option value="131072">128K — max practical</option>
+        </datalist>
+        <datalist id="moe-suggestions">
+          <option value="0">0 — all experts on GPU</option>
+          <option value="16">16 — partial offload</option>
+          <option value="24">24 — balanced</option>
+          <option value="30">30 — Pascal default</option>
+          <option value="36">36 — RAM-favored</option>
+          <option value="48">48 — almost all CPU</option>
+        </datalist>
+        <datalist id="threads-suggestions">
+          <option value="0">0 — auto (all cores)</option>
+          <option value="4">4</option>
+          <option value="8">8</option>
+          <option value="16">16</option>
+          <option value="32">32</option>
+        </datalist>
+        <datalist id="batch-suggestions">
+          <option value="256">256</option>
+          <option value="512">512</option>
+          <option value="1024">1024</option>
+          <option value="2048">2048 — default</option>
+          <option value="4096">4096</option>
+        </datalist>
+
+        <!-- Group 1: Identity (what model is running, what does the OpenAI API call it) -->
+        <div class="space-y-3">
+          <div class="text-xs uppercase tracking-wider text-zinc-500">Model</div>
+          <div class="grid grid-cols-2 gap-3 text-sm">
+            <label class="space-y-1">
+              <span class="text-zinc-300 text-xs">Model file</span>
+              <select x-model="cfg.model_file" class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 font-mono text-xs">
+                <template x-for="m in models" :key="m.name">
+                  <option :value="m.name" x-text="m.name"></option>
+                </template>
+              </select>
+              <span class="text-[10px] text-zinc-500 block">file in /models served as the OpenAI <code>model</code> name</span>
+            </label>
+            <label class="space-y-1">
+              <span class="text-zinc-300 text-xs">Alias</span>
+              <input x-model="cfg.alias" class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 font-mono text-xs" />
+              <span class="text-[10px] text-zinc-500 block">friendly label clients send in <code>"model": "..."</code></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Group 2: Memory layout (the high-impact knobs that determine VRAM/RAM use) -->
+        <div class="space-y-3 mt-5">
+          <div class="text-xs uppercase tracking-wider text-zinc-500">Memory layout</div>
+          <div class="grid grid-cols-2 gap-3 text-sm">
+            <label class="space-y-1">
+              <span class="text-zinc-300 text-xs">Context length</span>
+              <input type="number" x-model.number="cfg.ctx" min="512" max="262144" step="512"
+                     list="ctx-suggestions"
+                     class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2" />
+              <span class="text-[10px] text-zinc-500 block">tokens per request — longer = more KV-cache RAM</span>
+            </label>
+            <label class="space-y-1">
+              <span class="text-zinc-300 text-xs">KV cache type</span>
+              <select x-model="cfg.kv_type" class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2">
+                <template x-for="t in kvTypes" :key="t"><option :value="t" x-text="t"></option></template>
+              </select>
+              <span class="text-[10px] text-zinc-500 block">q8_0 = good default; turbo3/4 = TurboQuant</span>
+            </label>
+            <label class="space-y-1 col-span-2">
+              <span class="text-zinc-300 text-xs">MoE experts on CPU <span class="text-zinc-500">(--n-cpu-moe)</span></span>
+              <input type="number" x-model.number="cfg.n_cpu_moe" min="0" max="64"
+                     list="moe-suggestions"
+                     class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2" />
+              <span class="text-[10px] text-zinc-500 block">how many MoE expert blocks to keep on system RAM instead of GPU — raise this if VRAM OOMs, lower for speed</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Group 3: Performance (squeeze more throughput once memory fits) -->
+        <div class="space-y-3 mt-5">
+          <div class="text-xs uppercase tracking-wider text-zinc-500">Performance</div>
+          <div class="grid grid-cols-2 gap-3 text-sm">
+            <label class="space-y-1">
+              <span class="text-zinc-300 text-xs">FlashAttention</span>
+              <select x-model="cfg.flash_attn" class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2">
+                <option value="on">on</option><option value="off">off</option>
+              </select>
+              <span class="text-[10px] text-zinc-500 block">on = faster + less VRAM; off = compatibility mode</span>
+            </label>
+            <label class="space-y-1">
+              <span class="text-zinc-300 text-xs">CPU threads</span>
+              <input type="number" x-model.number="cfg.threads" min="0" max="256"
+                     list="threads-suggestions"
+                     class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2" />
+              <span class="text-[10px] text-zinc-500 block">0 = auto (all host cores)</span>
+            </label>
+            <label class="space-y-1">
+              <span class="text-zinc-300 text-xs">Batch</span>
+              <input type="number" x-model.number="cfg.batch" min="64" max="8192" step="64"
+                     list="batch-suggestions"
+                     class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2" />
+              <span class="text-[10px] text-zinc-500 block">prompt-processing chunk size</span>
+            </label>
+            <label class="space-y-1">
+              <span class="text-zinc-300 text-xs">Micro-batch</span>
+              <input type="number" x-model.number="cfg.ubatch" min="64" max="8192" step="64"
+                     list="batch-suggestions"
+                     class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2" />
+              <span class="text-[10px] text-zinc-500 block">decode chunk size — usually = batch</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Group 4: Escape hatch -->
+        <div class="space-y-3 mt-5">
+          <div class="text-xs uppercase tracking-wider text-zinc-500">Advanced</div>
+          <label class="space-y-1 block">
+            <span class="text-zinc-300 text-xs">Extra raw args</span>
             <input x-model="cfg.extra_args" placeholder="--top-p 0.9 --temp 0.7"
-                   class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 font-mono text-xs" />
+                   class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 font-mono text-xs" />
+            <span class="text-[10px] text-zinc-500 block">appended verbatim to the llama-server command</span>
           </label>
         </div>
-        <div class="flex items-center gap-3 mt-5">
-          <button @click="saveConfig(false)" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">Save</button>
-          <button @click="saveConfig(true)"  class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm">Save &amp; restart engine</button>
+
+        <div class="flex items-center gap-3 mt-6">
+          <button type="button" @click="saveConfig(false)" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">Save</button>
+          <button type="button" @click="saveConfig(true)"  class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm">Save &amp; restart engine</button>
           <span class="text-xs text-zinc-500" x-text="saveMsg"></span>
         </div>
       </div>
@@ -408,15 +485,28 @@
 
   <!-- ============================== LOGS ==================================== -->
   <section x-show="tab === 'logs'" class="space-y-3">
-    <div class="flex gap-2">
-      <button @click="logsPaused = !logsPaused"
+    <div class="flex flex-wrap gap-2 items-center">
+      <button type="button" @click="logsPaused = !logsPaused"
               :class="logsPaused ? 'bg-amber-600' : 'bg-zinc-800'"
               class="px-3 py-1.5 rounded text-sm" x-text="logsPaused ? '▶ resume' : '⏸ pause'"></button>
-      <button @click="logs = ''" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">🗑 clear view</button>
-      <button @click="reconnectLogs()" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">↻ reconnect</button>
-      <span class="text-xs text-zinc-500 self-center" x-text="`${logs.length.toLocaleString()} chars buffered`"></span>
+      <button type="button" @click="logs = []" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">🗑 clear view</button>
+      <button type="button" @click="reconnectLogs()" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">↻ reconnect</button>
+      <label class="flex items-center gap-2 text-xs text-zinc-400 ml-2">
+        <input type="checkbox" x-model="logsNewestFirst" class="accent-emerald-500" />
+        <span>Newest first</span>
+      </label>
+      <span class="text-xs text-zinc-500 ml-auto" x-text="`${logs.length.toLocaleString()} lines`"></span>
     </div>
-    <pre class="bg-black border border-zinc-800 rounded-xl p-4 h-[60vh] overflow-auto text-xs whitespace-pre-wrap" x-text="logs"></pre>
+    <div class="bg-black border border-zinc-800 rounded-xl p-3 h-[60vh] overflow-auto text-xs"
+         x-ref="logsScroll">
+      <template x-for="l in (logsNewestFirst ? logs.slice().reverse() : logs)" :key="l.id">
+        <div class="log-line flex gap-3 leading-tight py-0.5">
+          <span class="log-ts text-zinc-600 shrink-0" x-text="fmtLogTs(l.ts)"></span>
+          <span class="text-zinc-200 whitespace-pre-wrap break-all" x-text="l.text"></span>
+        </div>
+      </template>
+      <div x-show="!logs.length" class="text-zinc-600 text-center py-12">no log lines yet — engine boot lines will stream here</div>
+    </div>
   </section>
 
   <!-- ============================== BUILD =================================== -->
@@ -520,8 +610,12 @@ function llamador() {
     pullFile: 'Qwen3.6-35B-A3B-UD-Q4_K_M.gguf',
     pullTasks: [],          // running/done/error pull tasks shown above models table
     _pullPollTimer: null,
-    logs: '',
+    logs: [],            // [{id, ts, text}] — populated by the WS stream
     logsPaused: false,
+    logsNewestFirst: true,
+    _logsCounter: 0,
+    _logsCarry: '',      // unfinished line buffered between WS chunks
+    _logsBufferCap: 4000,
     buildLog: '',
     kvTypes: ['f32','f16','q8_0','q4_0','q4_1','q5_0','q5_1','turbo3','turbo4'],
     apiBase: '',
@@ -742,10 +836,42 @@ function llamador() {
     connectLogs() {
       try { if (this._ws) this._ws.close(); } catch {}
       this._ws = new WebSocket(this.wsUrl('/api/logs'));
-      this._ws.onmessage = e => { if (!this.logsPaused) this.logs += e.data; };
+      this._ws.onmessage = e => { if (!this.logsPaused) this._appendLogChunk(e.data); };
       this._ws.onclose = () => setTimeout(() => this.connectLogs(), 2000);
     },
     reconnectLogs() { this.connectLogs(); },
+
+    _appendLogChunk(chunk) {
+      // WS chunks may arrive mid-line; buffer the incomplete tail until the
+      // next \n. Each completed line gets its own row with a client-side
+      // timestamp (the engine's stdout doesn't include them).
+      const buf = this._logsCarry + chunk;
+      const parts = buf.split('\n');
+      this._logsCarry = parts.pop();   // last element is the unfinished tail
+      const now = Date.now();
+      for (const text of parts) {
+        if (!text.length && !this.logs.length) continue;  // skip leading blanks
+        this.logs.push({ id: ++this._logsCounter, ts: now, text });
+      }
+      // Cap the buffer so the DOM doesn't blow up on long-running engines.
+      if (this.logs.length > this._logsBufferCap) {
+        this.logs.splice(0, this.logs.length - this._logsBufferCap);
+      }
+      // Auto-scroll to wherever the newest line lives (top if reversed,
+      // bottom otherwise). Done in the next tick so the DOM has rendered.
+      this.$nextTick(() => {
+        const el = this.$refs.logsScroll;
+        if (!el) return;
+        if (this.logsNewestFirst) el.scrollTop = 0;
+        else el.scrollTop = el.scrollHeight;
+      });
+    },
+
+    fmtLogTs(ms) {
+      const d = new Date(ms);
+      const pad = n => String(n).padStart(2, '0');
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3,'0')}`;
+    },
 
     wsUrl(path) {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';

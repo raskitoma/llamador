@@ -7,8 +7,29 @@ html, body { height: 100%; }
 /* Make <pre> log views feel like a terminal. */
 pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
 
+/* Non-selectable app chrome — selection is only useful on data the user
+   would copy out (logs, file names, API keys, model paths, etc.). Anything
+   meant to be copyable opts in via .copyable or is naturally selectable. */
+body { -webkit-user-select: none; user-select: none; }
+input, textarea, select, pre, code, .copyable, [data-copyable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* Better focus rings on the dark theme. */
 input:focus, select:focus, button:focus-visible {
   outline: 2px solid rgba(16, 185, 129, 0.6);
   outline-offset: 1px;
 }
+
+/* Polish for form inputs across the panel. */
+input, select, textarea {
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+input:hover:not(:focus), select:hover:not(:focus), textarea:hover:not(:focus) {
+  border-color: rgb(82, 82, 91); /* zinc-600 */
+}
+
+/* Log lines: stable monospace + tighter line height, no break in numbers. */
+.log-line { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+.log-line .log-ts { font-variant-numeric: tabular-nums; }
