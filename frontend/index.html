@@ -707,17 +707,37 @@
           <input type="number" x-model.number="at.threads" class="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5" />
         </label>
       </div>
-      <div class="mt-2 text-[11px] text-zinc-500">
-        KV recipes:
-        <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='q8_0,turbo3,turbo4'">turbo compare</button>
-        ·
-        <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='q8_0,q4_0'">classic</button>
-        ·
-        <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='turbo3'">turbo3 only</button>
-        ·
-        <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes=''">current only (1-D)</button>
-        <span class="text-zinc-600 ml-2"
-              x-text="`= ${(at.sweep.split(',').filter(s=>s.trim()).length) * (at.kvTypes.split(',').filter(s=>s.trim()).length || 1)} bench runs`"></span>
+      <div class="mt-2 text-[11px] text-zinc-500 space-y-1">
+        <div>
+          <span class="text-zinc-400">KV recipes:</span>
+          <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='q8_0,turbo3,turbo4'">turbo compare</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='q8_0,q4_0'">classic</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='turbo3'">turbo3 only</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes=''">current only (1-D)</button>
+        </div>
+        <div>
+          <span class="text-zinc-400">Context size (pp tokens):</span>
+          <button type="button" class="underline hover:text-zinc-200" @click="at.pp=512">512 short</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200" @click="at.pp=2048">2K default</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200" @click="at.pp=4096">4K medium</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200" @click="at.pp=8192">8K long</button>
+        </div>
+        <div>
+          <span class="text-zinc-400">n-cpu-moe recipes:</span>
+          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='36,32,30,28'">Pascal 8GB sweet spot</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='40,36,32,28,24'">wider</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='48,40,36,32,28,24,20'">full range</button>
+        </div>
+        <div class="text-zinc-600 pt-1"
+             x-text="`= ${(at.sweep.split(',').filter(s=>s.trim()).length) * (at.kvTypes.split(',').filter(s=>s.trim()).length || 1)} bench runs (pp=${at.pp} · tg=${at.tg})`"></div>
       </div>
       <label class="flex items-center gap-2 mt-3 text-sm">
         <input type="checkbox" x-model="at.applyBest" class="accent-emerald-500" />
@@ -806,11 +826,29 @@
       <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 overflow-hidden">
         <div class="px-4 py-2 text-xs uppercase tracking-wider text-zinc-400 bg-zinc-900 flex items-center justify-between">
           <span>Event log <span class="text-zinc-600 normal-case lowercase">— live bench output</span></span>
-          <button type="button" @click="at.log=''" class="text-xs text-zinc-300 hover:text-white">🗑 clear</button>
+          <span class="flex items-center gap-3">
+            <span class="text-zinc-600 normal-case lowercase font-mono" x-text="at.log.length + ' lines'"></span>
+            <button type="button" @click="at.log = []" class="text-xs text-zinc-300 hover:text-white">🗑 clear</button>
+          </span>
         </div>
-        <pre x-ref="atLogPre"
-             x-effect="at.log; $nextTick(() => { if ($refs.atLogPre) $refs.atLogPre.scrollTop = $refs.atLogPre.scrollHeight; })"
-             class="bg-black p-4 h-96 overflow-auto text-xs whitespace-pre-wrap" x-text="at.log"></pre>
+        <!-- Each line is its own row so the bench's markdown table stays
+             column-aligned. Timestamp is a separate span; the message text
+             uses whitespace-pre + font-mono so |---|---|---| pipes line up. -->
+        <div x-ref="atLogPre"
+             x-effect="at.log.length; $nextTick(() => { if ($refs.atLogPre) $refs.atLogPre.scrollTop = $refs.atLogPre.scrollHeight; })"
+             class="bg-black h-96 overflow-auto text-xs">
+          <template x-for="l in at.log" :key="l.id">
+            <div class="log-line flex gap-3 leading-tight px-4 py-0.5">
+              <span class="log-ts text-zinc-600 shrink-0" x-text="fmtLogTs(l.ts)"></span>
+              <span class="font-mono whitespace-pre"
+                    :class="l.kind === 'event' ? 'text-zinc-500'
+                          : l.kind === 'header' ? 'text-emerald-300'
+                          : 'text-zinc-200'"
+                    x-text="l.text"></span>
+            </div>
+          </template>
+          <div x-show="!at.log.length" class="text-zinc-600 text-center py-12">no bench output yet — start a sweep above</div>
+        </div>
       </div>
     </div>
   </section>
@@ -871,17 +909,27 @@ function llamador() {
 
     // autotune
     at: {
-      sweep: '48,40,36,32,28,24,20',
+      // Default sweep targets the Pascal / 8 GB VRAM sweet spot for
+      // Qwen3.6-35B-A3B: high values mostly run on CPU (slow but safe),
+      // values below ~28 typically OOM the dense layers on the GPU.
+      // 36/32/30/28 is tight enough to find a winner in ~10 min and
+      // wide enough to surface the OOM cliff if the user is on a
+      // tighter VRAM budget.
+      sweep: '36,32,30,28',
       kvTypes: '',             // CSV; '' means "use the running cfg's kv_type"
-      pp: 512, tg: 128, threads: 0, applyBest: true,
+      // pp 2048 exercises a realistic prompt size (RAG / long-context
+      // chat), not the toy 512 that hides memory-bandwidth behavior.
+      pp: 2048, tg: 128, threads: 0, applyBest: true,
       running: false, status: '',
       activity: '',            // human-readable "what's happening right now"
-      results: [], best: null, log: '',
+      results: [], best: null,
+      log: [],                 // [{id, ts, text, kind}] — bench output, line per row
       task_id: null,           // current sweep id, used by Cancel
       _stepStartedAt: null,    // ms when the current step kicked off
       _stepDurations: [],      // completed step durations in ms (for ETA averaging)
     },
-    _atLogCap: 200_000,        // cap log buffer at ~200KB so the DOM stays snappy
+    _atLogCounter: 0,
+    _atLogCap: 4000,           // max number of log lines we keep in the DOM
 
     async boot() {
       await this.refresh();
@@ -1499,7 +1547,7 @@ function llamador() {
           this.at.results.push({ n_cpu_moe: n, kv_type: kv, pending: true, ok: false, running: false });
         }
       }
-      this.at.best = null; this.at.log = '';
+      this.at.best = null; this.at.log = [];
       this.at._stepStartedAt = null;
       this.at._stepDurations = [];
       this.at.running = true; this.at.status = 'starting…';
@@ -1523,15 +1571,17 @@ function llamador() {
       const ws = new WebSocket(this.wsUrl(`/api/autotune/${task_id}/ws`));
       ws.onmessage = e => {
         const msg = JSON.parse(e.data);
-        const ts = this.fmtLogTs(Date.now());
-        // bench_log lines get rendered raw; everything else as a JSON event.
         if (msg.type === 'bench_log') {
-          this.at.log += `${ts}  ${msg.line}\n`;
-          this._atLogTrim();
+          // Detect markdown table header rows so we can color them, but
+          // otherwise pass the line through unchanged so column alignment
+          // stays intact.
+          const kind = /^\s*\| *model/.test(msg.line) ? 'header'
+                     : /^\s*\| *-+/.test(msg.line)    ? 'header'
+                     : 'output';
+          this._atLogPush(msg.line, kind);
           this.at.activity = this._inferBenchStage(msg.line) || this.at.activity;
         } else {
-          this.at.log += `${ts}  · ${JSON.stringify(msg)}\n`;
-          this._atLogTrim();
+          this._atLogPush(`· ${JSON.stringify(msg)}`, 'event');
         }
         if (msg.type === 'step_start') {
           this.at.results.forEach(r => { r.running = false; });
@@ -1564,10 +1614,11 @@ function llamador() {
       ws.onerror = () => { this.at.running = false; this.at.status = 'ws error'; };
     },
 
-    _atLogTrim() {
+    _atLogPush(text, kind) {
+      this.at.log.push({ id: ++this._atLogCounter, ts: Date.now(), text, kind });
       if (this.at.log.length > this._atLogCap) {
-        // Drop the oldest 25% so we don't trim every line.
-        this.at.log = this.at.log.slice(-Math.floor(this._atLogCap * 0.75));
+        // Drop the oldest 25% in one go so we don't trim on every push.
+        this.at.log.splice(0, Math.floor(this._atLogCap * 0.25));
       }
     },
 
