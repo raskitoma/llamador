@@ -37,10 +37,15 @@ class DockerManager:
     def _find_engine(self) -> Container:
         # Compose labels are the most reliable way to find the right container
         # — survives renames and is unambiguous when multiple stacks coexist.
+        # Note: Compose v5.x bakes project/service labels into the IMAGE, so
+        # ephemeral `docker run` containers (e.g. gpu_monitor's nvidia-smi
+        # one-off) inherit them too. `container-number` is only set on real
+        # compose-managed containers, so requiring it filters those out.
         filters = {
             "label": [
                 f"com.docker.compose.project={self.settings.compose_project}",
                 f"com.docker.compose.service={self.settings.engine_service}",
+                "com.docker.compose.container-number",
             ]
         }
         containers = self.client.containers.list(all=True, filters=filters)
