@@ -64,8 +64,12 @@ RUN cmake -G Ninja -B build \
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION} AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
+# python3 (not python3-minimal) — entrypoint.sh's read_json helper imports
+# the json stdlib module, which python3-minimal omits. Without this, the
+# JSON config from /config/engine.json is silently ignored and the engine
+# uses whatever MODEL_FILE the env var was created with.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl libcurl4 libgomp1 tini python3-minimal \
+        ca-certificates curl libcurl4 libgomp1 tini python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Pascal runtime tuning baked into the image; can be overridden at `docker run`.

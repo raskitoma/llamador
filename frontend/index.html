@@ -246,6 +246,7 @@
                                                                           : 'text-rose-300'">
                 <span x-text="t.state === 'running' ? 'downloading…' : t.state"></span>
                 <span x-show="pullSpeedText(t)" class="text-zinc-500" x-text="' · ' + pullSpeedText(t)"></span>
+                <span x-show="pullEtaText(t)" class="text-zinc-500" x-text="' · ' + pullEtaText(t)"></span>
               </span>
               <button type="button" x-show="t.state !== 'running'" @click="dismissPullTask(t.id)"
                       aria-label="Dismiss"
@@ -702,6 +703,25 @@ function llamador() {
     pullSpeedText(t) {
       if (t.state !== 'running' || !t._speed) return '';
       return this.fmtBytes(t._speed) + '/s';
+    },
+
+    pullEtaText(t) {
+      if (t.state !== 'running' || !t._speed || !t.total_bytes) return '';
+      const remaining = t.total_bytes - (t.bytes_downloaded || 0);
+      if (remaining <= 0) return '';
+      return 'ETA ' + this.fmtDuration(remaining / t._speed);
+    },
+
+    fmtDuration(s) {
+      if (!isFinite(s) || s < 0) return '—';
+      s = Math.round(s);
+      if (s < 60) return `${s}s`;
+      if (s < 3600) {
+        const m = Math.floor(s / 60), ss = s % 60;
+        return ss ? `${m}m ${ss}s` : `${m}m`;
+      }
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+      return m ? `${h}h ${m}m` : `${h}h`;
     },
 
     async del(name) {
