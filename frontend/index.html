@@ -803,11 +803,11 @@
         </div>
         <div>
           <span class="text-zinc-400">n-cpu-moe recipes:</span>
-          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='36,32,30,28'">Pascal 8GB sweet spot</button>
+          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='36,32,30,28'">narrow (sweet spot)</button>
           ·
-          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='40,36,32,28,24'">wider</button>
+          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='44,42,40,38,36,34,32,30,28,26,24,22,20'">exhaustive (default)</button>
           ·
-          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='48,40,36,32,28,24,20'">full range</button>
+          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='48,40,36,32,28,24,20'">classic step-of-4</button>
         </div>
         <div class="text-zinc-600 pt-1"
              x-text="`= ${(at.sweep.split(',').filter(s=>s.trim()).length) * (at.kvTypes.split(',').filter(s=>s.trim()).length || 1)} bench runs (pp=${at.pp} · tg=${at.tg})`"></div>
@@ -989,14 +989,18 @@ function llamador() {
 
     // autotune
     at: {
-      // Default sweep targets the Pascal / 8 GB VRAM sweet spot for
-      // Qwen3.6-35B-A3B: high values mostly run on CPU (slow but safe),
-      // values below ~28 typically OOM the dense layers on the GPU.
-      // 36/32/30/28 is tight enough to find a winner in ~10 min and
-      // wide enough to surface the OOM cliff if the user is on a
-      // tighter VRAM budget.
-      sweep: '36,32,30,28',
-      kvTypes: '',             // CSV; '' means "use the running cfg's kv_type"
+      // Default testing sweep covers the practical CPU/GPU split for
+      // Qwen3.6-35B-A3B on 8 GB Pascal: 44-36 stays comfortably within
+      // VRAM (most experts on CPU), 34-22 progressively pushes more
+      // layers onto the GPU until something OOMs, 20 is the floor that
+      // typically blows the dense layers. With real CUDA in place you
+      // want this whole sweep so the autotune can find the actual cliff
+      // instead of a fake winner. Combined with the kv-type axis below,
+      // that's 13 × 3 = 39 cells — long but exhaustive.
+      sweep: '44,42,40,38,36,34,32,30,28,26,24,22,20',
+      // Compare q8_0 against TurboQuant variants out of the box — that
+      // is the whole point of running on the TurboQuant fork.
+      kvTypes: 'q8_0,turbo3,turbo4',
       // pp 2048 exercises a realistic prompt size (RAG / long-context
       // chat), not the toy 512 that hides memory-bandwidth behavior.
       pp: 2048, tg: 128, threads: 0, applyBest: true,
