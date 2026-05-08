@@ -32,7 +32,7 @@ except Exception as e:
 " 2>/dev/null
   }
   # Map JSON keys → engine env vars. Empty results keep the existing value.
-  for k in model_file alias n_cpu_moe ctx kv_type flash_attn threads batch ubatch extra_args; do
+  for k in model_file alias n_cpu_moe ctx kv_type flash_attn threads batch ubatch no_mmap extra_args; do
     v="$(read_json "$k" || true)"
     if [[ -n "$v" ]]; then
       case "$k" in
@@ -45,6 +45,7 @@ except Exception as e:
         threads)    THREADS="$v" ;;
         batch)      BATCH="$v" ;;
         ubatch)     UBATCH="$v" ;;
+        no_mmap)    NO_MMAP="$v" ;;
         extra_args) EXTRA_ARGS="$v" ;;
       esac
     fi
@@ -74,14 +75,23 @@ if [[ ! -f "${MODEL_FILE}" ]]; then
   exit 2
 fi
 
+# --no-mmap pins the model into RAM up-front (paired with --mlock) so the
+# kernel doesn't lazy-page weights during inference. On low-VRAM / heavy
+# CPU-offload setups this is the difference between 3 t/s and 17 t/s
+# (per the TheTom GTX 1060 demo).
+NO_MMAP_ARG=""
+case "${NO_MMAP:-off}" in
+  on|true|1|yes) NO_MMAP_ARG="--no-mmap" ;;
+esac
+
 echo "[engine] booting TurboQuant llama-server"
 echo "[engine] commit:   $(cat /etc/turboquant.sha 2>/dev/null || echo unknown)"
 echo "[engine] model:    ${MODEL_FILE}"
-echo "[engine] knobs:    ngl=${NGL} n_cpu_moe=${N_CPU_MOE} ctx=${CTX} kv=${KV_TYPE} fa=${FLASH_ATTN} threads=${THREADS}"
+echo "[engine] knobs:    ngl=${NGL} n_cpu_moe=${N_CPU_MOE} ctx=${CTX} kv=${KV_TYPE} fa=${FLASH_ATTN} threads=${THREADS} no_mmap=${NO_MMAP:-off}"
 echo "[engine] extra:    ${EXTRA_ARGS:-(none)}"
 
 # ---------- 4. exec --------------------------------------------------------
-# shellcheck disable=SC2086  # EXTRA_ARGS is intentionally word-split
+# shellcheck disable=SC2086  # EXTRA_ARGS and NO_MMAP_ARG are intentionally word-split
 exec llama-server \
   --model        "${MODEL_FILE}" \
   --alias        "${ALIAS}" \
@@ -96,6 +106,7 @@ exec llama-server \
   -t             "${THREADS}" \
   -b             "${BATCH}" \
   -ub            "${UBATCH}" \
+  ${NO_MMAP_ARG} \
   --mlock \
   --metrics \
   ${EXTRA_ARGS}

@@ -71,6 +71,13 @@ class RuntimeConfig(BaseModel):
     threads: int = Field(0, ge=0, le=256, description="0 = auto (use all cores)")
     batch: int = 2048
     ubatch: int = 2048
+    no_mmap: bool = Field(
+        False,
+        description="Disable mmap and load the whole model into RAM up-front. "
+                    "Combined with --mlock this pins the weights resident — recommended "
+                    "for low-VRAM / heavy-CPU-offload setups where lazy mmap paging "
+                    "causes stalls during inference.",
+    )
     extra_args: str = ""
 
 
@@ -112,5 +119,6 @@ def to_engine_env(cfg: RuntimeConfig) -> dict[str, str]:
         "THREADS": str(cfg.threads) if cfg.threads > 0 else "auto",
         "BATCH": str(cfg.batch),
         "UBATCH": str(cfg.ubatch),
+        "NO_MMAP": "on" if cfg.no_mmap else "off",
         "EXTRA_ARGS": cfg.extra_args,
     }

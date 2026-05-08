@@ -294,15 +294,50 @@
           </div>
         </div>
 
-        <!-- Group 4: Escape hatch -->
+        <!-- Group 4: Memory pinning + escape hatch -->
         <div class="space-y-3 mt-5">
           <div class="text-xs uppercase tracking-wider text-zinc-500">Advanced</div>
+          <label class="flex items-start gap-2 text-sm">
+            <input type="checkbox" x-model="cfg.no_mmap" class="mt-0.5 accent-emerald-500" />
+            <span>
+              <span class="text-zinc-200">Disable mmap</span>
+              <span class="text-[10px] text-zinc-500 block leading-snug">
+                pins model into RAM up-front (paired with <code>--mlock</code>);
+                avoids kernel lazy-paging stalls during inference. Recommended
+                for heavy CPU-offload setups — the difference between 3 t/s and
+                17 t/s in the TheTom GTX 1060 demo.
+              </span>
+            </span>
+          </label>
           <label class="space-y-1 block">
             <span class="text-zinc-300 text-xs">Extra raw args</span>
             <input x-model="cfg.extra_args" placeholder="--top-p 0.9 --temp 0.7"
                    class="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 font-mono text-xs" />
             <span class="text-[10px] text-zinc-500 block">appended verbatim to the llama-server command</span>
           </label>
+        </div>
+
+        <!-- Presets — one-click "known-good" configs derived from the TurboQuant demos -->
+        <div class="space-y-1 mt-5">
+          <div class="text-xs uppercase tracking-wider text-zinc-500">Presets</div>
+          <div class="text-[11px] text-zinc-500 flex flex-wrap gap-2">
+            <button type="button" @click="applyPresetVideo()"
+                    class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200">
+              📹 Video config (Pascal 8 GB · 35B-A3B)
+            </button>
+            <button type="button" @click="applyPresetSafe()"
+                    class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200">
+              🛟 Safe (high n_cpu_moe, 8K ctx)
+            </button>
+            <button type="button" @click="applyPresetMaxCtx()"
+                    class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200">
+              🎯 Max context (turbo3 · 64K)
+            </button>
+          </div>
+          <div class="text-[10px] text-zinc-500 leading-snug pt-1">
+            Presets only fill the form — they don't save. Click
+            <span class="text-emerald-300">Save &amp; restart engine</span> to apply.
+          </div>
         </div>
 
         <div class="flex items-center gap-3 mt-6">
@@ -1098,6 +1133,52 @@ function llamador() {
       const r = await fetch(this.apiBase + path, { method: 'POST' });
       if (!r.ok) this.notify(`${path} failed (HTTP ${r.status})`, 'error');
       setTimeout(() => this.refresh(), 800);
+    },
+
+    // ----- presets — fill the form, user clicks Save & restart to apply -----
+    applyPresetVideo() {
+      // From TheTom's GTX 1060 6 GB demo (35B-A3B, 17 t/s with --no-mmap),
+      // adjusted for your 8 GB Pascal + 32 GB RAM + 36-core Xeon: lower
+      // n_cpu_moe to take advantage of the extra 2 GB VRAM, give it a
+      // healthy thread count without going over physical cores (NUMA
+      // hurts past ~16-18 on dual-socket Xeon).
+      this.cfg = { ...this.cfg,
+        n_cpu_moe: 32,
+        ctx: 16384,
+        kv_type: 'turbo3',
+        flash_attn: 'on',
+        threads: 16,
+        batch: 2048,
+        ubatch: 2048,
+        no_mmap: true,
+      };
+      this.notify('Video preset applied — review and click Save & restart', 'info');
+    },
+    applyPresetSafe() {
+      this.cfg = { ...this.cfg,
+        n_cpu_moe: 44,
+        ctx: 8192,
+        kv_type: 'q8_0',
+        flash_attn: 'on',
+        threads: 0,
+        batch: 2048,
+        ubatch: 2048,
+        no_mmap: false,
+      };
+      this.notify('Safe preset applied — review and click Save & restart', 'info');
+    },
+    applyPresetMaxCtx() {
+      this.cfg = { ...this.cfg,
+        n_cpu_moe: 36,
+        ctx: 65536,
+        kv_type: 'turbo3',
+        flash_attn: 'on',
+        threads: 16,
+        batch: 2048,
+        ubatch: 2048,
+        no_mmap: true,
+      };
+      this.notify('Max-context preset applied — review and click Save & restart', 'info');
     },
 
     async saveConfig(restart) {
