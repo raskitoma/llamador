@@ -258,7 +258,16 @@ class AutotuneRunner:
             except Exception: pass
             return
 
-        # 3) pick the best (highest tg, tie-break toward higher n_cpu_moe for headroom)
+        # 3) pick the best — but optimise for "works in serve mode", not
+        # "fastest in the bench". The bench runs with one slot; the engine
+        # serves with n_seq_max=4, so KV cache scales 4× and the same
+        # n_cpu_moe that fit in bench can OOM the engine. Two safeguards:
+        #
+        #   a) Hard filter: require ≥ 1.5 GB VRAM still free at peak so
+        #      the additional 3 slots' KV cache + dispatch buffers fit.
+        #   b) Soft tie-break (10% bias, up from 3%) toward higher
+        #      n_cpu_moe — that pushes more weight onto CPU RAM, which
+        #      is plentiful, and shrinks the GPU footprint for serve.
         candidates = [s for s in st.steps if s.ok and s.tg_tps is not None]
         if not candidates:
             st.state = "error"
@@ -266,9 +275,36 @@ class AutotuneRunner:
             await emit("done", best=None, error=st.error)
             return
 
+        # Find total VRAM (best-effort) so we can require headroom for
+        # serve-mode's 4-slot KV cache.
+        total_vram_mb = 0
+        try:
+            if self.gm is not None:
+                gpu_stats = self.gm.stats() or {}
+                for d in (gpu_stats.get("gpus") or []):
+                    total_vram_mb = max(total_vram_mb, int(d.get("memory.total") or 0))
+        except Exception:
+            pass
+
+        SERVE_HEADROOM_MB = 1536  # ≈ 4-slot KV + extra dispatch overhead
+        if total_vram_mb > 0:
+            safe_peak = total_vram_mb - SERVE_HEADROOM_MB
+            serve_safe = [s for s in candidates if (s.peak_vram_mb or 0) <= safe_peak]
+            if serve_safe:
+                candidates = serve_safe
+                await emit(
+                    "info",
+                    message=f"filtered to {len(candidates)} cells with ≥ {SERVE_HEADROOM_MB} MiB VRAM headroom",
+                )
+            else:
+                await emit(
+                    "info",
+                    message=f"warning: no cells leave {SERVE_HEADROOM_MB} MiB headroom — picking from all anyway",
+                )
+
         top_tg = max(s.tg_tps for s in candidates)  # type: ignore[arg-type]
-        # within 3% → prefer higher n_cpu_moe (more VRAM headroom)
-        cutoff = top_tg * 0.97
+        # within 10% → prefer higher n_cpu_moe (more VRAM headroom for serve mode)
+        cutoff = top_tg * 0.90
         within = [s for s in candidates if (s.tg_tps or 0) >= cutoff]
         st.best = max(within, key=lambda s: s.n_cpu_moe)
 

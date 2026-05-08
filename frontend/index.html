@@ -456,11 +456,44 @@
         <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
           <h2 class="font-medium mb-3">Engine power</h2>
           <div class="flex flex-wrap gap-2">
-            <button @click="post('/api/restart')"  class="px-3 py-1.5 rounded bg-amber-600/80 hover:bg-amber-500 text-sm">↻ Restart</button>
-            <button @click="post('/api/stop')"     class="px-3 py-1.5 rounded bg-zinc-700 hover:bg-zinc-600 text-sm">⏹ Stop</button>
-            <button @click="post('/api/start')"    class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm">▶ Start</button>
-            <button @click="rebuild()"             class="px-3 py-1.5 rounded bg-fuchsia-700 hover:bg-fuchsia-600 text-sm">⚙ Rebuild image</button>
-            <button @click="tab='autotune'"        class="px-3 py-1.5 rounded bg-cyan-700 hover:bg-cyan-600 text-sm">📐 Auto-tune</button>
+            <button type="button" @click="testInference()" :disabled="testing"
+                    aria-label="Test inference"
+                    class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-sm"
+                    x-text="testing ? 'testing…' : '✓ Test inference'"></button>
+            <button type="button" @click="post('/api/restart')"  class="px-3 py-1.5 rounded bg-amber-600/80 hover:bg-amber-500 text-sm">↻ Restart</button>
+            <button type="button" @click="post('/api/stop')"     class="px-3 py-1.5 rounded bg-zinc-700 hover:bg-zinc-600 text-sm">⏹ Stop</button>
+            <button type="button" @click="post('/api/start')"    class="px-3 py-1.5 rounded bg-zinc-700 hover:bg-zinc-600 text-sm">▶ Start</button>
+            <button type="button" @click="rebuild()"             class="px-3 py-1.5 rounded bg-fuchsia-700 hover:bg-fuchsia-600 text-sm">⚙ Rebuild image</button>
+            <button type="button" @click="tab='autotune'"        class="px-3 py-1.5 rounded bg-cyan-700 hover:bg-cyan-600 text-sm">📐 Auto-tune</button>
+          </div>
+          <!-- Test inference result panel -->
+          <div x-show="testResult" class="mt-4 space-y-2">
+            <div x-show="testResult?.ok === true" class="bg-emerald-500/10 border border-emerald-500/30 rounded p-3 space-y-2">
+              <div class="flex justify-between text-xs">
+                <span class="text-emerald-300">✓ engine responded</span>
+                <span class="text-zinc-400 font-mono"
+                      x-text="testResult ? `${(testResult.tokens_per_second_decode||0).toFixed(1)} t/s decode · ${testResult.elapsed_seconds}s · ${testResult.completion_tokens} tokens` : ''"></span>
+              </div>
+              <div class="text-sm text-zinc-200 whitespace-pre-wrap break-words"
+                   x-text="testResult?.content || '(empty content — see thinking-mode note below)'"></div>
+              <div x-show="testResult?.thinking_only" class="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded p-2 space-y-1">
+                <div class="font-medium">⚠️ Thinking-mode warning</div>
+                <div class="text-zinc-400">
+                  This model wrote its reply to <code>reasoning_content</code> instead of <code>content</code>.
+                  Plain OpenAI clients (OpenClaw, etc.) may show an empty response.
+                  <strong>Pull a non-thinking model (e.g. Qwen3-8B) or raise <code>max_tokens</code> in the client</strong> so the model finishes thinking and writes a real answer.
+                </div>
+                <details class="text-zinc-500">
+                  <summary class="cursor-pointer hover:text-zinc-300">show reasoning_content</summary>
+                  <div class="mt-1 whitespace-pre-wrap break-words text-zinc-400" x-text="testResult?.reasoning_content"></div>
+                </details>
+              </div>
+            </div>
+            <div x-show="testResult?.ok === false" class="bg-rose-500/10 border border-rose-500/30 rounded p-3 text-sm">
+              <div class="text-rose-300 font-medium mb-1">✗ test failed</div>
+              <div class="text-zinc-300 text-xs"
+                   x-text="testResult?.error || `${testResult?.stage || ''} HTTP ${testResult?.status || '?'}: ${testResult?.body || ''}`"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -478,14 +511,26 @@
                class="flex-1 min-w-64 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm" />
         <button @click="pullModel()" class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm">⬇ Pull</button>
       </div>
-      <div class="mt-3 text-xs text-zinc-400">Recipes:
-        <button class="underline hover:text-zinc-200" @click="pullRepo='unsloth/Qwen3.6-35B-A3B-GGUF'; pullFile='Qwen3.6-35B-A3B-UD-Q4_K_M.gguf'">UD-Q4_K_M (22.1 GB)</button>
-        ·
-        <button class="underline hover:text-zinc-200" @click="pullRepo='unsloth/Qwen3.6-35B-A3B-GGUF'; pullFile='Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf'">UD-Q4_K_XL (22.4 GB)</button>
-        ·
-        <button class="underline hover:text-zinc-200" @click="pullRepo='unsloth/Qwen3.6-35B-A3B-GGUF'; pullFile='Qwen3.6-35B-A3B-UD-IQ4_XS.gguf'">UD-IQ4_XS (17.7 GB)</button>
-        ·
-        <button class="underline hover:text-zinc-200" @click="pullRepo='unsloth/Qwen3.6-35B-A3B-GGUF'; pullFile='Qwen3.6-35B-A3B-UD-Q3_K_M.gguf'">UD-Q3_K_M (16.6 GB)</button>
+      <div class="mt-3 text-xs text-zinc-400 space-y-1">
+        <div>
+          <span class="text-zinc-300">★ Recommended for 8 GB Pascal — fits entirely on GPU, no MoE-on-CPU needed:</span>
+          <button type="button" class="underline hover:text-emerald-200 text-emerald-300 font-medium"
+                  @click="pullRepo='unsloth/Qwen3-8B-GGUF'; pullFile='Qwen3-8B-Q4_K_M.gguf'">Qwen3-8B Q4_K_M (5 GB)</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200"
+                  @click="pullRepo='unsloth/Qwen3-8B-GGUF'; pullFile='Qwen3-8B-Q5_K_M.gguf'">Qwen3-8B Q5_K_M (6 GB)</button>
+        </div>
+        <div>
+          <span class="text-zinc-500">35B-A3B MoE (needs n_cpu_moe offload, slower):</span>
+          <button type="button" class="underline hover:text-zinc-200" @click="pullRepo='unsloth/Qwen3.6-35B-A3B-GGUF'; pullFile='Qwen3.6-35B-A3B-UD-IQ4_XS.gguf'">3.6 IQ4_XS (17.7 GB)</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200" @click="pullRepo='unsloth/Qwen3.6-35B-A3B-GGUF'; pullFile='Qwen3.6-35B-A3B-UD-Q4_K_M.gguf'">3.6 UD-Q4_K_M (22.1 GB)</button>
+        </div>
+        <div>
+          <span class="text-zinc-500">30B-A3B MoE (slightly smaller predecessor):</span>
+          <button type="button" class="underline hover:text-zinc-200"
+                  @click="pullRepo='unsloth/Qwen3-30B-A3B-GGUF'; pullFile='Qwen3-30B-A3B-UD-Q4_K_M.gguf'">Qwen3-30B-A3B UD-Q4_K_M (18 GB)</button>
+        </div>
       </div>
     </div>
 
@@ -1019,6 +1064,10 @@ function llamador() {
     _lastUsage: null,
     _sparkBuf: [],
 
+    // engine smoke test
+    testing: false,
+    testResult: null,
+
     // clients tab
     caps: {},
     apiKeys: [],
@@ -1133,6 +1182,27 @@ function llamador() {
       const r = await fetch(this.apiBase + path, { method: 'POST' });
       if (!r.ok) this.notify(`${path} failed (HTTP ${r.status})`, 'error');
       setTimeout(() => this.refresh(), 800);
+    },
+
+    async testInference() {
+      this.testing = true;
+      this.testResult = null;
+      try {
+        const r = await fetch(this.apiBase + '/api/test-chat', { method: 'POST' });
+        const j = await r.json();
+        this.testResult = j;
+        if (j.ok) {
+          if (j.thinking_only) this.notify('Engine responded but only filled reasoning_content', 'warning');
+          else this.notify(`Engine OK · ${(j.tokens_per_second_decode || 0).toFixed(1)} t/s`, 'success');
+        } else {
+          this.notify(`Engine test failed (${j.stage || 'unknown'})`, 'error');
+        }
+      } catch (e) {
+        this.testResult = { ok: false, error: e.message, stage: 'frontend' };
+        this.notify('Test inference request failed: ' + e.message, 'error');
+      } finally {
+        this.testing = false;
+      }
     },
 
     // ----- presets — fill the form, user clicks Save & restart to apply -----

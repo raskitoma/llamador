@@ -174,6 +174,54 @@ def start_engine() -> dict:
     return {"started": True}
 
 
+# ---------------------------------------------------------- /api/test-chat
+@app.post("/api/test-chat", dependencies=[Depends(auth)])
+async def test_chat(prompt: str = "Reply with one short sentence.") -> dict:
+    """End-to-end smoke test — calls the engine's chat-completions endpoint
+    directly (bypassing /v1 auth) so the user can verify in one click that
+    inference works without juggling API keys in their HTTP client.
+
+    Returns the timings, the assistant content, and the reasoning_content
+    if present (Qwen-style thinking mode often dumps the answer there
+    instead of the standard content field, which surprises plain OpenAI
+    clients)."""
+    cfg = load_config()
+    body = {
+        "model": cfg.alias,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 128,
+        "stream": False,
+    }
+    started = asyncio.get_event_loop().time()
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(f"{settings.engine_url}/v1/chat/completions", json=body)
+    except httpx.HTTPError as e:
+        return {"ok": False, "error": str(e), "stage": "transport"}
+    elapsed = asyncio.get_event_loop().time() - started
+    if r.status_code != 200:
+        return {"ok": False, "status": r.status_code, "body": r.text[:500],
+                "elapsed_seconds": round(elapsed, 2), "stage": "engine"}
+    j = r.json()
+    msg = (j.get("choices") or [{}])[0].get("message", {}) or {}
+    content = msg.get("content") or ""
+    reasoning = msg.get("reasoning_content") or ""
+    timings = j.get("timings") or {}
+    return {
+        "ok": True,
+        "model": j.get("model"),
+        "elapsed_seconds": round(elapsed, 2),
+        "tokens_per_second_decode": timings.get("predicted_per_second"),
+        "tokens_per_second_prompt": timings.get("prompt_per_second"),
+        "prompt_tokens": (j.get("usage") or {}).get("prompt_tokens"),
+        "completion_tokens": (j.get("usage") or {}).get("completion_tokens"),
+        "content": content,
+        "reasoning_content": reasoning,
+        "thinking_only": bool(reasoning) and not content,
+        "build": j.get("system_fingerprint"),
+    }
+
+
 # ----------------------------------------------------------------- models
 @app.get("/api/models", dependencies=[Depends(auth)])
 def list_models() -> list[dict]:
