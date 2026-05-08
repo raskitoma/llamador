@@ -818,11 +818,11 @@
       <div class="mt-2 text-[11px] text-zinc-500 space-y-1">
         <div>
           <span class="text-zinc-400">KV recipes:</span>
+          <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='turbo3'">★ turbo3 only (default)</button>
+          ·
           <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='q8_0,turbo3,turbo4'">turbo compare</button>
           ·
           <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='q8_0,q4_0'">classic</button>
-          ·
-          <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes='turbo3'">turbo3 only</button>
           ·
           <button type="button" class="underline hover:text-zinc-200" @click="at.kvTypes=''">current only (1-D)</button>
         </div>
@@ -830,7 +830,7 @@
           <span class="text-zinc-400">Context size (pp tokens):</span>
           <button type="button" class="underline hover:text-zinc-200" @click="at.pp=512">512 short</button>
           ·
-          <button type="button" class="underline hover:text-zinc-200" @click="at.pp=2048">2K default</button>
+          <button type="button" class="underline hover:text-zinc-200" @click="at.pp=2048">★ 2K (default)</button>
           ·
           <button type="button" class="underline hover:text-zinc-200" @click="at.pp=4096">4K medium</button>
           ·
@@ -838,14 +838,18 @@
         </div>
         <div>
           <span class="text-zinc-400">n-cpu-moe recipes:</span>
-          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='36,32,30,28'">narrow (sweet spot)</button>
+          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='27,28,29,30,31,32,33,34,35,36,37'">★ ±5 around 32 (default)</button>
           ·
-          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='44,42,40,38,36,34,32,30,28,26,24,22,20'">exhaustive (default)</button>
+          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='22,24,26,28,30,32,34,36,38,40,42'">±10 step-of-2</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='44,42,40,38,36,34,32,30,28,26,24,22,20'">exhaustive</button>
           ·
           <button type="button" class="underline hover:text-zinc-200" @click="at.sweep='48,40,36,32,28,24,20'">classic step-of-4</button>
         </div>
-        <div class="text-zinc-600 pt-1"
-             x-text="`= ${(at.sweep.split(',').filter(s=>s.trim()).length) * (at.kvTypes.split(',').filter(s=>s.trim()).length || 1)} bench runs (pp=${at.pp} · tg=${at.tg})`"></div>
+        <div class="text-zinc-600 pt-1 leading-relaxed">
+          <span x-text="`= ${(at.sweep.split(',').filter(s=>s.trim()).length) * (at.kvTypes.split(',').filter(s=>s.trim()).length || 1)} bench runs (pp=${at.pp} · tg=${at.tg})`"></span>
+          <span class="text-zinc-500">— ★ marks the testing default (centered on the video preset)</span>
+        </div>
       </div>
       <label class="flex items-center gap-2 mt-3 text-sm">
         <input type="checkbox" x-model="at.applyBest" class="accent-emerald-500" />
@@ -1024,20 +1028,16 @@ function llamador() {
 
     // autotune
     at: {
-      // Default testing sweep covers the practical CPU/GPU split for
-      // Qwen3.6-35B-A3B on 8 GB Pascal: 44-36 stays comfortably within
-      // VRAM (most experts on CPU), 34-22 progressively pushes more
-      // layers onto the GPU until something OOMs, 20 is the floor that
-      // typically blows the dense layers. With real CUDA in place you
-      // want this whole sweep so the autotune can find the actual cliff
-      // instead of a fake winner. Combined with the kv-type axis below,
-      // that's 13 × 3 = 39 cells — long but exhaustive.
-      sweep: '44,42,40,38,36,34,32,30,28,26,24,22,20',
-      // Compare q8_0 against TurboQuant variants out of the box — that
-      // is the whole point of running on the TurboQuant fork.
-      kvTypes: 'q8_0,turbo3,turbo4',
-      // pp 2048 exercises a realistic prompt size (RAG / long-context
-      // chat), not the toy 512 that hides memory-bandwidth behavior.
+      // ★ Default sweep centers on n_cpu_moe=32 (the video preset's value)
+      // and walks ±5 either way in steps of 1 — fine-grained enough to
+      // pinpoint the actual sweet spot on your specific hardware without
+      // the long tail of the exhaustive matrix. Wider recipes are below.
+      sweep: '27,28,29,30,31,32,33,34,35,36,37',
+      // turbo3 only by default — the video's chosen KV. Click the recipes
+      // below if you want to compare against q8_0 or turbo4 too.
+      kvTypes: 'turbo3',
+      // pp 2048 exercises a realistic prompt size; matches the
+      // ctx=16384 default in the video preset reasonably well.
       pp: 2048, tg: 128, threads: 0, applyBest: true,
       running: false, status: '',
       activity: '',            // human-readable "what's happening right now"

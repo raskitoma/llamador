@@ -62,21 +62,26 @@ FlashAttn = Literal["on", "off"]
 class RuntimeConfig(BaseModel):
     """The set of engine knobs we expose to the UI."""
 
-    model_file: str = Field("Qwen3.6-35B-A3B-Q4_K_M.gguf", description="Filename inside /models")
+    # ────────────────────────────────────────────────────────────────────
+    # ★ Defaults mirror the TheTom GTX 1060 6 GB demo (35B-A3B, 17 t/s)
+    # adapted to a Pascal 8 GB + 32 GB RAM target. n_cpu_moe=32 is the
+    # recommended starting center — autotune nudges ±5 from there.
+    # ────────────────────────────────────────────────────────────────────
+    model_file: str = Field("Qwen3.6-35B-A3B-UD-IQ4_XS.gguf", description="Filename inside /models")
     alias: str = "qwen3.6-35b-a3b"
-    n_cpu_moe: int = Field(30, ge=0, le=64, description="MoE layers offloaded to CPU RAM")
-    ctx: int = Field(8192, ge=512, le=262144)
-    kv_type: KVType = "q8_0"
+    n_cpu_moe: int = Field(32, ge=0, le=64, description="★ recommended 32 — MoE experts offloaded to CPU RAM")
+    ctx: int = Field(16384, ge=512, le=262144)
+    kv_type: KVType = "turbo3"
     flash_attn: FlashAttn = "on"
-    threads: int = Field(0, ge=0, le=256, description="0 = auto (use all cores)")
+    threads: int = Field(16, ge=0, le=256, description="0 = auto; 16 fits one Xeon socket without NUMA penalty")
     batch: int = 2048
     ubatch: int = 2048
     no_mmap: bool = Field(
-        False,
+        True,
         description="Disable mmap and load the whole model into RAM up-front. "
                     "Combined with --mlock this pins the weights resident — recommended "
                     "for low-VRAM / heavy-CPU-offload setups where lazy mmap paging "
-                    "causes stalls during inference.",
+                    "causes stalls during inference (3 t/s vs 17 t/s in the demo).",
     )
     extra_args: str = ""
 
