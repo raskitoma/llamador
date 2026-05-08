@@ -231,6 +231,74 @@ def list_models() -> list[dict]:
 def pull_model(repo: str, filename: str) -> dict:
     return {"task_id": model_mgr.start_pull(repo, filename)}
 
+# ----- Hugging Face catalogue browser (LMStudio-style search/browse) -----
+# Thin proxies in front of the public HF Hub API so we can:
+#   1. Add the operator's HF_TOKEN if set (better rate limits + gated repos).
+#   2. Avoid CORS pain — the browser can hit our backend instead of HF.
+#   3. Filter the response down to fields the UI actually needs.
+
+def _hf_headers() -> dict[str, str]:
+    h = {"User-Agent": f"llamador/{__version__}"}
+    if settings.hf_token:
+        h["Authorization"] = f"Bearer {settings.hf_token}"
+    return h
+
+@app.get("/api/hf/search", dependencies=[Depends(auth)])
+async def hf_search(q: str, limit: int = 20) -> list[dict]:
+    """Search public HF models filtered to GGUF, sorted by downloads."""
+    if not q.strip():
+        return []
+    async with httpx.AsyncClient(timeout=15.0) as cx:
+        r = await cx.get(
+            "https://huggingface.co/api/models",
+            params={
+                "search": q.strip(),
+                "filter": "gguf",
+                "limit": str(min(max(1, limit), 50)),
+                "sort": "downloads",
+                "direction": "-1",
+            },
+            headers=_hf_headers(),
+        )
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, f"hf search failed: {r.text[:200]}")
+    out = []
+    for m in r.json():
+        out.append({
+            "id":            m.get("id") or m.get("modelId"),
+            "downloads":     m.get("downloads"),
+            "likes":         m.get("likes"),
+            "tags":          m.get("tags", []),
+            "lastModified":  m.get("lastModified"),
+            "pipeline_tag":  m.get("pipeline_tag"),
+            "private":       m.get("private", False),
+            "gated":         m.get("gated", False),
+        })
+    return out
+
+@app.get("/api/hf/files", dependencies=[Depends(auth)])
+async def hf_files(repo: str) -> list[dict]:
+    """List .gguf files in a HF repo with sizes (best-effort recursive)."""
+    async with httpx.AsyncClient(timeout=15.0) as cx:
+        r = await cx.get(
+            f"https://huggingface.co/api/models/{repo}/tree/main",
+            params={"recursive": "true"},
+            headers=_hf_headers(),
+        )
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, f"hf list failed: {r.text[:200]}")
+    files = [
+        {
+            "name": f.get("path"),
+            "size_bytes": int(f.get("size") or 0),
+        }
+        for f in r.json()
+        if f.get("type") == "file" and (f.get("path") or "").endswith(".gguf")
+    ]
+    files.sort(key=lambda x: x["size_bytes"])  # smallest first — easier to scan
+    return files
+
+
 @app.delete("/api/models/{name}", dependencies=[Depends(auth)])
 def delete_model(name: str) -> dict:
     try: model_mgr.delete(name)

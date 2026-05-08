@@ -502,36 +502,128 @@
 
   <!-- ============================== MODELS ================================== -->
   <section x-show="tab === 'models'" class="space-y-6">
-    <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5">
-      <h2 class="font-medium mb-3">Pull a GGUF from Hugging Face</h2>
-      <div class="flex flex-wrap gap-2">
-        <input x-model="pullRepo" placeholder="repo (e.g. unsloth/Qwen3.6-35B-A3B-GGUF)"
-               class="flex-1 min-w-64 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm" />
-        <input x-model="pullFile" placeholder="filename (e.g. Qwen3.6-35B-A3B-Q4_K_M.gguf)"
-               class="flex-1 min-w-64 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm" />
-        <button @click="pullModel()" class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm">⬇ Pull</button>
+    <!-- ============= Hugging Face catalogue browser (LMStudio-style) ====== -->
+    <div class="rounded-xl bg-zinc-900/60 border border-zinc-800 p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="font-medium">Search Hugging Face</h2>
+        <span class="text-xs text-zinc-500">filtered to GGUF · sorted by downloads</span>
       </div>
-      <div class="mt-3 text-xs text-zinc-400 space-y-1">
-        <div>
-          <span class="text-zinc-300">★ Recommended for 8 GB Pascal — fits entirely on GPU, no MoE-on-CPU needed:</span>
-          <button type="button" class="underline hover:text-emerald-200 text-emerald-300 font-medium"
-                  @click="pullRepo='unsloth/Qwen3-8B-GGUF'; pullFile='Qwen3-8B-Q4_K_M.gguf'">Qwen3-8B Q4_K_M (5 GB)</button>
+
+      <!-- Search bar -->
+      <div class="flex gap-2">
+        <input type="search" x-model="hfSearch" @keydown.enter.prevent="searchHF()"
+               placeholder="Search models — Qwen3.6, Llama-3.1, Mistral-Small, …"
+               class="flex-1 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm" />
+        <button type="button" @click="searchHF()" :disabled="hfSearchLoading"
+                class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-sm"
+                aria-label="Search">
+          <span x-show="!hfSearchLoading">🔍 Search</span>
+          <span x-show="hfSearchLoading">searching…</span>
+        </button>
+      </div>
+
+      <!-- Quick-pick chips (kept from the old Recipes row, condensed) -->
+      <div class="text-xs text-zinc-400 flex flex-wrap gap-x-2 gap-y-1 items-center">
+        <span class="text-zinc-500">Quick searches:</span>
+        <button type="button" class="underline hover:text-emerald-200 text-emerald-300"
+                @click="hfSearch='Qwen3.6'; searchHF()">Qwen3.6</button>
+        ·
+        <button type="button" class="underline hover:text-zinc-200" @click="hfSearch='Qwen3-8B'; searchHF()">Qwen3-8B</button>
+        ·
+        <button type="button" class="underline hover:text-zinc-200" @click="hfSearch='Qwen3-30B-A3B'; searchHF()">Qwen3-30B-A3B</button>
+        ·
+        <button type="button" class="underline hover:text-zinc-200" @click="hfSearch='Llama-3'; searchHF()">Llama-3</button>
+        ·
+        <button type="button" class="underline hover:text-zinc-200" @click="hfSearch='Mistral'; searchHF()">Mistral</button>
+        ·
+        <button type="button" class="underline hover:text-zinc-200" @click="hfSearch='unsloth'; searchHF()">unsloth</button>
+        ·
+        <button type="button" class="underline hover:text-zinc-200" @click="hfSearch='gemma'; searchHF()">Gemma</button>
+        <span class="text-zinc-600 ml-2">★ marks Pascal-friendly starting points</span>
+      </div>
+
+      <!-- Recommended quick-pull (carry-over) -->
+      <div class="bg-emerald-500/5 border border-emerald-500/20 rounded p-2 text-xs space-y-1">
+        <div class="text-emerald-300 font-medium">★ Pascal 8 GB: fits-on-GPU dense models</div>
+        <div class="text-zinc-400 flex flex-wrap gap-x-2">
+          <button type="button" class="underline hover:text-emerald-200"
+                  @click="quickPull('unsloth/Qwen3-8B-GGUF', 'Qwen3-8B-Q4_K_M.gguf')">Qwen3-8B Q4_K_M (5 GB)</button>
           ·
           <button type="button" class="underline hover:text-zinc-200"
-                  @click="pullRepo='unsloth/Qwen3-8B-GGUF'; pullFile='Qwen3-8B-Q5_K_M.gguf'">Qwen3-8B Q5_K_M (6 GB)</button>
+                  @click="quickPull('unsloth/Qwen3-8B-GGUF', 'Qwen3-8B-Q5_K_M.gguf')">Qwen3-8B Q5_K_M (6 GB)</button>
         </div>
-        <div>
-          <span class="text-zinc-500">35B-A3B MoE (needs n_cpu_moe offload, slower):</span>
-          <button type="button" class="underline hover:text-zinc-200" @click="pullRepo='unsloth/Qwen3.6-35B-A3B-GGUF'; pullFile='Qwen3.6-35B-A3B-UD-IQ4_XS.gguf'">3.6 IQ4_XS (17.7 GB)</button>
-          ·
-          <button type="button" class="underline hover:text-zinc-200" @click="pullRepo='unsloth/Qwen3.6-35B-A3B-GGUF'; pullFile='Qwen3.6-35B-A3B-UD-Q4_K_M.gguf'">3.6 UD-Q4_K_M (22.1 GB)</button>
-        </div>
-        <div>
-          <span class="text-zinc-500">30B-A3B MoE (slightly smaller predecessor):</span>
+        <div class="text-zinc-500">MoE (needs n_cpu_moe offload):</div>
+        <div class="text-zinc-400 flex flex-wrap gap-x-2">
           <button type="button" class="underline hover:text-zinc-200"
-                  @click="pullRepo='unsloth/Qwen3-30B-A3B-GGUF'; pullFile='Qwen3-30B-A3B-UD-Q4_K_M.gguf'">Qwen3-30B-A3B UD-Q4_K_M (18 GB)</button>
+                  @click="quickPull('unsloth/Qwen3.6-35B-A3B-GGUF', 'Qwen3.6-35B-A3B-UD-IQ4_XS.gguf')">Qwen3.6-35B-A3B IQ4_XS (17.7 GB)</button>
+          ·
+          <button type="button" class="underline hover:text-zinc-200"
+                  @click="quickPull('unsloth/Qwen3-30B-A3B-GGUF', 'Qwen3-30B-A3B-UD-Q4_K_M.gguf')">Qwen3-30B-A3B UD-Q4_K_M (18 GB)</button>
         </div>
       </div>
+
+      <!-- Search results — cards with downloads, likes, last-updated, and an
+           expand button that lists the .gguf files inside the repo. Click
+           any file to pull it directly. -->
+      <div x-show="hfResults.length" class="space-y-2 max-h-[60vh] overflow-auto">
+        <template x-for="m in hfResults" :key="m.id">
+          <div class="bg-zinc-950/60 border border-zinc-800 rounded p-3 hover:border-zinc-700 transition">
+            <div class="flex justify-between gap-3 items-start">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-baseline gap-2 flex-wrap">
+                  <a class="font-mono text-sm text-emerald-300 hover:text-emerald-200 truncate"
+                     :href="`https://huggingface.co/${m.id}`" target="_blank" rel="noopener"
+                     x-text="m.id"></a>
+                  <span x-show="m.gated" class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">gated · needs HF_TOKEN</span>
+                  <span x-show="m.private" class="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300">private</span>
+                </div>
+                <div class="text-xs text-zinc-500 mt-0.5 flex flex-wrap gap-3">
+                  <span x-text="`⬇ ${fmtCount(m.downloads || 0)}`"></span>
+                  <span x-text="`♥ ${fmtCount(m.likes || 0)}`"></span>
+                  <span x-text="'updated ' + fmtRelDate(m.lastModified)"></span>
+                  <span x-show="m.pipeline_tag" class="text-zinc-400" x-text="m.pipeline_tag"></span>
+                </div>
+                <div x-show="(m.tags || []).length" class="mt-1 flex flex-wrap gap-1">
+                  <template x-for="t in (m.tags || []).slice(0, 8)" :key="t">
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono" x-text="t"></span>
+                  </template>
+                </div>
+              </div>
+              <button type="button" @click="loadFiles(m.id)"
+                      class="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 shrink-0"
+                      x-text="hfFilesByRepo[m.id] ? '▾ files' : '▸ files'"></button>
+            </div>
+            <!-- Expanded GGUF file list with sizes + per-file pull -->
+            <div x-show="hfFilesByRepo[m.id]" class="mt-3 border-t border-zinc-800 pt-2 space-y-1 max-h-72 overflow-auto">
+              <div x-show="hfFilesByRepo[m.id]?.length === 0" class="text-xs text-zinc-500 italic">
+                no .gguf files in this repo's main branch
+              </div>
+              <template x-for="f in (hfFilesByRepo[m.id] || [])" :key="f.name">
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="font-mono flex-1 truncate" :title="f.name" x-text="f.name"></span>
+                  <span class="text-zinc-500 tabular-nums w-20 text-right" x-text="fmtBytes(f.size_bytes)"></span>
+                  <button type="button" @click="quickPull(m.id, f.name)"
+                          class="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-zinc-50">
+                    ⬇ Pull
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Manual fallback for users who already know the repo + filename -->
+      <details class="text-xs text-zinc-500">
+        <summary class="cursor-pointer hover:text-zinc-300">Manual: pull by exact repo / filename</summary>
+        <div class="mt-2 flex flex-wrap gap-2">
+          <input x-model="pullRepo" placeholder="repo (e.g. unsloth/Qwen3.6-35B-A3B-GGUF)"
+                 class="flex-1 min-w-64 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm" />
+          <input x-model="pullFile" placeholder="filename (e.g. Qwen3.6-35B-A3B-UD-IQ4_XS.gguf)"
+                 class="flex-1 min-w-64 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm" />
+          <button type="button" @click="pullModel()" class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm">⬇ Pull</button>
+        </div>
+      </details>
     </div>
 
     <!-- Active pull tasks (HF download progress) -->
@@ -1031,6 +1123,11 @@ function llamador() {
     saveMsg: '',
     pullRepo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
     pullFile: 'Qwen3.6-35B-A3B-UD-Q4_K_M.gguf',
+    // HF catalogue browser
+    hfSearch: '',
+    hfSearchLoading: false,
+    hfResults: [],
+    hfFilesByRepo: {},     // repo id → [{name, size_bytes}] when expanded
     pullTasks: [],          // running/done/error pull tasks shown above models table
     _pullPollTimer: null,
     logs: [],            // [{id, ts, text, cat}] — populated by the WS stream
@@ -1260,6 +1357,62 @@ function llamador() {
       });
       this.saveMsg = r.ok ? (restart ? 'saved & restarted' : 'saved') : ('error ' + r.status);
       setTimeout(() => { this.saveMsg = ''; this.refresh(); this.refreshClients(); }, 2500);
+    },
+
+    // ----- Hugging Face search/browse ------------------------------------
+    async searchHF() {
+      const q = (this.hfSearch || '').trim();
+      if (!q) return;
+      this.hfSearchLoading = true;
+      this.hfResults = [];
+      this.hfFilesByRepo = {};
+      try {
+        const r = await fetch(this.apiBase + '/api/hf/search?q=' + encodeURIComponent(q) + '&limit=25');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        this.hfResults = await r.json();
+        if (!this.hfResults.length) this.notify('No GGUF models matched that search', 'info');
+      } catch (e) {
+        this.notify('Search failed: ' + e.message, 'error');
+      } finally {
+        this.hfSearchLoading = false;
+      }
+    },
+
+    async loadFiles(repo) {
+      if (this.hfFilesByRepo[repo]) {
+        // Already loaded — collapse the panel.
+        const next = { ...this.hfFilesByRepo };
+        delete next[repo];
+        this.hfFilesByRepo = next;
+        return;
+      }
+      try {
+        const r = await fetch(this.apiBase + '/api/hf/files?repo=' + encodeURIComponent(repo));
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        this.hfFilesByRepo = { ...this.hfFilesByRepo, [repo]: await r.json() };
+      } catch (e) {
+        this.notify('Could not list files: ' + e.message, 'error');
+      }
+    },
+
+    quickPull(repo, file) {
+      // Set the manual inputs so the user can see what's being pulled,
+      // then fire the existing pull pipeline (download tracker + UI poll).
+      this.pullRepo = repo;
+      this.pullFile = file;
+      this.pullModel();
+    },
+
+    fmtRelDate(iso) {
+      if (!iso) return '?';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      const sec = (Date.now() - d.getTime()) / 1000;
+      if (sec < 60)     return 'just now';
+      if (sec < 3600)   return Math.floor(sec / 60)    + 'm ago';
+      if (sec < 86400)  return Math.floor(sec / 3600)  + 'h ago';
+      if (sec < 604800) return Math.floor(sec / 86400) + 'd ago';
+      return d.toLocaleDateString();
     },
 
     async pullModel() {
